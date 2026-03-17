@@ -25,9 +25,19 @@ python3 threads_oauth_authorize.py \
   --open
 ```
 
-Search the top keyword result:
+Setup for the browser-based Threads search script:
 
 ```bash
-python3 search_top_keyword.py "openai"
-python3 search_top_keyword.py "openai" --json
+python3 -m venv venv
+./venv/bin/pip install -r requirements.txt
+sudo apt-get update
+sudo apt-get install -y libnspr4 libnss3 libasound2t64 fonts-noto-cjk
+./venv/bin/python -m playwright install chromium
+```
+
+Search Threads in the browser:
+
+```bash
+./venv/bin/python search_top_keyword.py "openai"
+./venv/bin/python search_top_keyword.py "openai" --json
 ```

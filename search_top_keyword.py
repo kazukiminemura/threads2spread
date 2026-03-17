@@ -42,7 +42,18 @@ def extract_results(page, limit):
         """
         (elements) => elements.map((a) => ({
           href: a.href || "",
-          text: (a.innerText || "").trim()
+          text: (a.innerText || "").trim(),
+          content: (() => {
+            let node = a;
+            for (let i = 0; i < 6 && node; i += 1) {
+              const text = (node.innerText || "").trim();
+              if (text && text.length >= 20) {
+                return text;
+              }
+              node = node.parentElement;
+            }
+            return (a.innerText || "").trim();
+          })()
         }))
         """
     )
@@ -52,6 +63,7 @@ def extract_results(page, limit):
     for item in anchors:
         link = item.get("href", "")
         text = item.get("text", "")
+        content = item.get("content", "")
         if "/@" not in link and "/post/" not in link:
             continue
         if "threads.com" not in link:
@@ -59,7 +71,13 @@ def extract_results(page, limit):
         if link in seen:
             continue
         seen.add(link)
-        results.append({"title": text, "link": link})
+        results.append(
+            {
+                "title": text,
+                "content": content or text,
+                "link": link,
+            }
+        )
         if len(results) >= limit:
             break
 
@@ -143,8 +161,7 @@ def main():
         return
 
     for index, result in enumerate(results, start=1):
-        print(f"[{index}] {result['title']}")
-        print(f"link: {result['link']}")
+        print(f"[{index}] {result['content']}")
 
 
 if __name__ == "__main__":
