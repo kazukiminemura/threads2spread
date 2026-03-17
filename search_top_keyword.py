@@ -1,79 +1,117 @@
 import argparse
 import json
-from urllib.parse import quote_plus
+from pathlib import Path
 
 from playwright.sync_api import sync_playwright
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 
-DEFAULT_SITES = ["threads.com", "threads.net"]
-GOOGLE_SEARCH_URL = "https://www.google.com/search?q="
+THREADS_HOME_URL = "https://www.threads.com/"
+THREADS_SEARCH_URL = "https://www.threads.com/search"
+PROFILE_DIR = Path(".playwright-threads-profile")
+BROWSER_LOCALE = "ja-JP"
+BROWSER_TIMEZONE = "Asia/Tokyo"
+EXTRA_HEADERS = {
+    "Accept-Language": "ja-JP,ja;q=0.9,en-US;q=0.8,en;q=0.7",
+}
+SEARCH_INPUT_SELECTORS = [
+    'input[placeholder*="Search"]',
+    'input[placeholder*="search"]',
+    'input[aria-label*="Search"]',
+    'input[aria-label*="search"]',
+    'input[type="search"]',
+    "input",
+]
 
 
-def build_query(keyword, sites):
-    site_query = " OR ".join(f"site:{site}" for site in sites)
-    return f"{site_query} {keyword}"
+def find_search_input(page):
+    for selector in SEARCH_INPUT_SELECTORS:
+        locator = page.locator(selector).first
+        if locator.count() == 0:
+            continue
+        try:
+            locator.wait_for(state="visible", timeout=3000)
+            return locator, selector
+        except PlaywrightTimeoutError:
+            continue
+    return None, None
 
 
-def search_threads_posts(keyword, sites, limit):
-    query = build_query(keyword, sites)
-    search_url = f"{GOOGLE_SEARCH_URL}{quote_plus(query)}"
-    results = []
-
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        page = browser.new_page()
-        page.goto(search_url, wait_until="domcontentloaded", timeout=60000)
-        page.wait_for_timeout(2000)
-
-        anchors = page.locator("a[href]").evaluate_all(
-            """
-            (elements) => elements.map((a) => ({
-              href: a.href || "",
-              title: (a.innerText || "").trim()
-            }))
-            """
-        )
-
-        browser.close()
+def extract_results(page, limit):
+    anchors = page.locator("a[href]").evaluate_all(
+        """
+        (elements) => elements.map((a) => ({
+          href: a.href || "",
+          text: (a.innerText || "").trim()
+        }))
+        """
+    )
 
     seen = set()
+    results = []
     for item in anchors:
         link = item.get("href", "")
-        title = item.get("title", "")
-        if not any(site in link for site in sites):
+        text = item.get("text", "")
+        if "/@" not in link and "/post/" not in link:
+            continue
+        if "threads.com" not in link:
             continue
         if link in seen:
             continue
         seen.add(link)
-
-        results.append(
-            {
-                "title": title,
-                "link": link,
-            }
-        )
-
+        results.append({"title": text, "link": link})
         if len(results) >= limit:
             break
 
-    return {
-        "query": query,
-        "search_url": search_url,
-        "results": results,
+    return results
+
+
+def search_threads_posts(keyword, limit):
+    payload = {
+        "keyword": keyword,
+        "home_url": THREADS_HOME_URL,
+        "search_url": THREADS_SEARCH_URL,
+        "input_selector": None,
+        "results": [],
     }
+
+    with sync_playwright() as p:
+        context = p.chromium.launch_persistent_context(
+            str(PROFILE_DIR),
+            headless=False,
+            locale=BROWSER_LOCALE,
+            timezone_id=BROWSER_TIMEZONE,
+        )
+        context.set_extra_http_headers(EXTRA_HEADERS)
+        page = context.new_page()
+        page.goto(THREADS_HOME_URL, wait_until="networkidle", timeout=60000)
+        page.wait_for_timeout(5000)
+        page.goto(THREADS_SEARCH_URL, wait_until="networkidle", timeout=60000)
+        page.wait_for_timeout(3000)
+        search_input, selector = find_search_input(page)
+
+        if search_input is None:
+            raise RuntimeError(
+                "Could not find the Threads search input after opening threads.com and waiting 5 seconds."
+            )
+
+        payload["input_selector"] = selector
+        search_input.click()
+        search_input.fill(keyword)
+        page.keyboard.press("Enter")
+        page.wait_for_timeout(5000)
+
+        payload["results"] = extract_results(page, limit)
+        context.close()
+
+    return payload
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Search top Threads posts by operating a browser and reading Google results."
+        description="Search Threads directly from threads.com/search using the browser."
     )
     parser.add_argument("keyword", help="Keyword to search")
-    parser.add_argument(
-        "--site",
-        action="append",
-        dest="sites",
-        help="Site filter to use. Can be passed multiple times.",
-    )
     parser.add_argument(
         "--limit",
         type=int,
@@ -87,20 +125,21 @@ def main():
     )
     args = parser.parse_args()
 
-    sites = args.sites or DEFAULT_SITES
-    payload = search_threads_posts(args.keyword, sites, args.limit)
+    payload = search_threads_posts(args.keyword, args.limit)
     results = payload["results"]
 
     if args.json:
         print(json.dumps(payload, ensure_ascii=False, indent=2))
         return
 
-    print(f"query: {payload['query']}")
+    print(f"keyword: {payload['keyword']}")
+    print(f"home_url: {payload['home_url']}")
     print(f"search_url: {payload['search_url']}")
+    print(f"input_selector: {payload['input_selector']}")
     print(f"results_count: {len(results)}")
 
     if not results:
-        print("No matching Threads posts found")
+        print("No matching Threads results found")
         return
 
     for index, result in enumerate(results, start=1):
