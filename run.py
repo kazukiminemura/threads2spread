@@ -13,10 +13,15 @@ API_BASE_URL = os.getenv("API_BASE_URL", "https://graph.threads.net/v1.0")
 def get_user_id():
     url = f"{API_BASE_URL}/me"
     headers = {"Authorization": f"Bearer {ACCESS_TOKEN}"}
-    response = requests.get(url, headers=headers, timeout=30)
+    params = {"fields": "id,username"}
+    response = requests.get(url, headers=headers, params=params, timeout=30)
 
     if response.ok:
-        return response.json().get("id")
+        data = response.json()
+        return {
+            "id": data.get("id"),
+            "username": data.get("username"),
+        }
 
     print(f"Failed to get user ID: {response.status_code} {response.text}")
     return None
@@ -27,12 +32,13 @@ def main():
         print("ACCESS_TOKEN is not set in .env")
         return
 
-    user_id = get_user_id()
+    user = get_user_id()
 
-    if user_id:
-        print(f"user_id: {user_id}")
+    if user:
+        print(f"user_id: {user.get('id')}")
+        print(f"username: {user.get('username')}")
     else:
-        print("Could not retrieve user_id")
+        print("Could not retrieve user information")
 
 
 if __name__ == "__main__":
