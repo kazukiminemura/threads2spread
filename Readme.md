@@ -24,3 +24,10 @@ python3 threads_oauth_authorize.py \
   --state "debug-state" \
   --open
 ```
+
+Search the top keyword result:
+
+```bash
+python3 search_top_keyword.py "openai"
+python3 search_top_keyword.py "openai" --json
+```
