@@ -17,14 +17,14 @@ DEFAULT_FIELDS = (
 
 def search_top_keyword(keyword):
     url = f"{API_BASE_URL}/keyword_search"
-    headers = {"Authorization": f"Bearer {ACCESS_TOKEN}"}
     params = {
         "q": keyword,
         "search_type": "TOP",
         "fields": DEFAULT_FIELDS,
+        "access_token": ACCESS_TOKEN,
     }
 
-    response = requests.get(url, headers=headers, params=params, timeout=30)
+    response = requests.get(url, params=params, timeout=30)
 
     if not response.ok:
         print(f"Failed to search keyword: {response.status_code} {response.text}")
