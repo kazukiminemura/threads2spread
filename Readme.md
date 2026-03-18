@@ -40,4 +40,23 @@ Search Threads in the browser:
 ```bash
 ./venv/bin/python search_top_keyword.py "openai"
 ./venv/bin/python search_top_keyword.py "openai" --json
+./venv/bin/python search_top_keyword.py "openai" --save-results
+./venv/bin/python search_top_keyword.py "openai" --create-schedule --start-date 2026-03-19 --start-time 10:00 --interval-minutes 30
+./venv/bin/python search_top_keyword.py "openai" --create-schedule --rewrite-with-llm --llm-model qwen3.5:4b --start-date 2026-03-19 --start-time 10:00 --interval-minutes 30
+./venv/bin/python search_top_keyword.py "openai" --use-saved-results --create-schedule --rewrite-with-llm
+./venv/bin/python search_top_keyword.py "openai" --results-file outputs/search_results/20260318_102353_openai.json --create-schedule
+./venv/bin/python search_top_keyword.py "openai" --results-file outputs/search_results/20260318_102353_openai.json --create-schedule --rewrite-with-llm --llm-model qwen3:8b --llm-timeout 600
 ```
+
+Output files:
+
+- Search results JSON: `outputs/search_results/<timestamp>_<keyword>.json`
+- Schedule CSV: `outputs/schedules/<timestamp>_<keyword>.csv`
+
+The generated schedule CSV contains columns compatible with the spreadsheet format in the screenshot:
+
+- `ID`, `投稿内容`, `予定日付`, `予定時刻`, `ステータス`, `投稿URL`, `ツリーID`, `投稿順序`
+
+To rewrite each post before saving the CSV, start Ollama locally and pass `--rewrite-with-llm`.
+You can override the endpoint with `OLLAMA_BASE_URL`, the default model with `OLLAMA_MODEL`, and the timeout with `OLLAMA_TIMEOUT`.
+To skip a new Threads search, use `--use-saved-results` to load the latest JSON for that keyword, or `--results-file` to load a specific saved JSON file.
