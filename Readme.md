@@ -31,7 +31,7 @@ Setup for the browser-based Threads search script:
 python3 -m venv venv
 ./venv/bin/pip install -r requirements.txt
 sudo apt-get update
-sudo apt-get install -y libnspr4 libnss3 libasound2t64 fonts-noto-cjk
+sudo apt-get install -y libnspr4 libnss3 libasound2t64 fonts-noto-cjk ibglib2.0-0
 ./venv/bin/python -m playwright install chromium
 ```
 
