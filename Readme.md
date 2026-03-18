@@ -33,6 +33,7 @@ python3 -m venv venv
 sudo apt-get update
 sudo apt-get install -y libnspr4 libnss3 libasound2t64 fonts-noto-cjk ibglib2.0-0
 ./venv/bin/python -m playwright install chromium
+npx playwright install --with-deps chromium
 ```
 
 Search Threads in the browser:
