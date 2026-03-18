@@ -34,6 +34,7 @@ sudo apt-get update
 sudo apt-get install -y libnspr4 libnss3 libasound2t64 fonts-noto-cjk ibglib2.0-0
 ./venv/bin/python -m playwright install chromium
 npx playwright install --with-deps chromium
+apt-get install -y xvfb
 ```
 
 Search Threads in the browser:
