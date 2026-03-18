@@ -35,6 +35,7 @@ sudo apt-get install -y libnspr4 libnss3 libasound2t64 fonts-noto-cjk ibglib2.0-
 ./venv/bin/python -m playwright install chromium
 npx playwright install --with-deps chromium
 apt-get install -y xvfb
+sudo apt install language-pack-ja-base language-pack-ja
 ```
 
 Search Threads in the browser:
