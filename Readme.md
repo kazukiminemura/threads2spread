@@ -62,12 +62,11 @@ Search Threads in the browser:
 ```bash
 ./venv/bin/python search_top_keyword.py "openai"
 ./venv/bin/python search_top_keyword.py "openai" --json
-./venv/bin/python search_top_keyword.py "openai" --use-saved --manual-rewrites-file outputs/manual_rewrite/20260320_120000_openai_rewritten.txt
+./venv/bin/python search_top_keyword.py --manual-rewrites-file outputs/manual_rewrite/20260320_120000_openai_rewritten.txt
 ./venv/bin/python search_top_keyword.py "openai" --no-ai
 ./venv/bin/python search_top_keyword.py "openai" --llm-provider auto
 ./venv/bin/python search_top_keyword.py "openai" --llm-provider ollama --llm-model llama3.2:3b
 ./venv/bin/python search_top_keyword.py "openai" --llm-provider remote --remote-llm-model gpt-4o-mini
-./venv/bin/python search_top_keyword.py "openai" --start-date 2026-03-19 --start-time 10:00 --interval-minutes 30
 ./venv/bin/python search_top_keyword.py "openai" --use-saved
 ./venv/bin/python search_top_keyword.py "openai" --results-file outputs/search_results/20260318_102353_openai.json
 ./venv/bin/python search_top_keyword.py "openai" --llm-model qwen3:8b --remote-llm-model gpt-4o-mini --llm-timeout 600
@@ -76,7 +75,6 @@ Search Threads in the browser:
 Output files:
 
 - Search results JSON: `outputs/search_results/<timestamp>_<keyword>.json`
-- Schedule CSV: `outputs/schedules/<timestamp>_<keyword>.csv`
 - Manual browser prompt: `outputs/manual_rewrite/<timestamp>_<keyword>_chatgpt_prompt.txt`
 - Manual browser response template: `outputs/manual_rewrite/<timestamp>_<keyword>_rewritten.txt`
 
@@ -86,20 +84,16 @@ The default behavior is simple:
 - The script searches Threads.
 - It creates ChatGPT/browser prompt files by default.
 - It saves the raw search results automatically.
-- It waits for you to import rewritten lines before creating the final CSV.
-
-The generated schedule CSV contains columns compatible with the spreadsheet format in the screenshot:
-
-- `ID`, `投稿内容`, `予定日付`, `予定時刻`, `ステータス`, `投稿URL`, `ツリーID`, `投稿順序`
+- It waits for you to import rewritten lines as final post text.
 
 Manual browser ChatGPT workflow:
 
 1. Run `search_top_keyword.py "keyword"`
 2. Open the generated `*_chatgpt_prompt.txt` file and paste it into ChatGPT in your browser
 3. Put ChatGPT's rewritten lines into the generated `*_rewritten.txt` file, one line per post
-4. Run `search_top_keyword.py "keyword" --use-saved --manual-rewrites-file <that rewritten file>`
+4. Run `search_top_keyword.py --manual-rewrites-file <that rewritten file>`
 
-This browser/manual flow is now the default. The script saves the search results and prompt files first, and it creates the final CSV only after you import the rewritten lines.
+This browser/manual flow is now the default. The script saves the search results and prompt files first, and it imports the rewritten lines only after you pass `--manual-rewrites-file`. It automatically finds the matching saved search results JSON from the same run.
 
 AI rewrite modes:
 

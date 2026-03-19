@@ -1,6 +1,5 @@
 import argparse
-import csv
-from datetime import datetime, timedelta
+from datetime import datetime
 import json
 import os
 from pathlib import Path
@@ -21,7 +20,6 @@ THREADS_SEARCH_URL = "https://www.threads.com/search"
 PROFILE_DIR = Path(".playwright-threads-profile")
 OUTPUT_DIR = Path("outputs")
 SEARCH_RESULTS_DIR = OUTPUT_DIR / "search_results"
-SCHEDULES_DIR = OUTPUT_DIR / "schedules"
 MANUAL_REWRITE_DIR = OUTPUT_DIR / "manual_rewrite"
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:7b")
@@ -39,16 +37,6 @@ BROWSER_TIMEZONE = "Asia/Tokyo"
 EXTRA_HEADERS = {
     "Accept-Language": "ja-JP,ja;q=0.9,en-US;q=0.8,en;q=0.7",
 }
-SCHEDULE_HEADERS = [
-    "ID",
-    "投稿内容",
-    "予定日付",
-    "予定時刻",
-    "ステータス",
-    "投稿URL",
-    "ツリーID",
-    "投稿順序",
-]
 SEARCH_INPUT_SELECTORS = [
     'input[placeholder*="Search"]',
     'input[placeholder*="search"]',
@@ -57,7 +45,7 @@ SEARCH_INPUT_SELECTORS = [
     'input[type="search"]',
     "input",
 ]
-REWRITE_PROMPT = """You rewrite Threads search results into concise Japanese scheduled posts.
+REWRITE_PROMPT = """You rewrite Threads search results into concise Japanese Threads posts.
 
 Requirements:
 - Output only the rewritten post text.
@@ -67,7 +55,7 @@ Requirements:
 - Keep it under 140 Japanese characters when possible.
 - Avoid emojis unless they are strongly justified by the source.
 """
-MANUAL_REWRITE_SYSTEM_PROMPT = """Rewrite each source post into polished Japanese for Threads scheduling.
+MANUAL_REWRITE_SYSTEM_PROMPT = """Rewrite each source post into polished Japanese for Threads.
 
 Rules:
 - Keep the meaning aligned with the source.
@@ -204,7 +192,6 @@ def search_threads_posts(keyword, limit):
 
 def ensure_output_dirs():
     SEARCH_RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-    SCHEDULES_DIR.mkdir(parents=True, exist_ok=True)
     MANUAL_REWRITE_DIR.mkdir(parents=True, exist_ok=True)
 
 
@@ -213,6 +200,20 @@ def build_output_stem(keyword):
     safe_keyword = "".join(char if char.isalnum() else "_" for char in keyword).strip("_")
     safe_keyword = safe_keyword or "keyword"
     return f"{timestamp}_{safe_keyword}"
+
+
+def parse_output_stem_from_path(path):
+    name = path.name
+    suffixes = [
+        "_chatgpt_prompt.txt",
+        "_rewritten.txt",
+        ".json",
+        ".csv",
+    ]
+    for suffix in suffixes:
+        if name.endswith(suffix):
+            return name[: -len(suffix)]
+    return path.stem
 
 
 def save_search_results(payload, output_stem):
@@ -229,6 +230,10 @@ def load_search_results(results_file):
     return json.loads(results_file.read_text(encoding="utf-8"))
 
 
+def build_search_results_path_from_stem(output_stem):
+    return SEARCH_RESULTS_DIR / f"{output_stem}.json"
+
+
 def find_latest_search_results_file(keyword):
     ensure_output_dirs()
     safe_keyword = "".join(char if char.isalnum() else "_" for char in keyword).strip("_")
@@ -239,27 +244,14 @@ def find_latest_search_results_file(keyword):
     return candidates[-1]
 
 
-def parse_start_datetime(start_date, start_time):
-    return datetime.strptime(f"{start_date} {start_time}", "%Y-%m-%d %H:%M")
-
-
-def build_schedule_rows(results, start_at, interval_minutes, status):
-    rows = []
-    for index, result in enumerate(results, start=1):
-        scheduled_at = start_at + timedelta(minutes=interval_minutes * (index - 1))
-        rows.append(
-            [
-                index,
-                result.get("content", ""),
-                scheduled_at.strftime("%Y/%m/%d"),
-                scheduled_at.strftime("%H:%M"),
-                status,
-                result.get("link", ""),
-                "",
-                "",
-            ]
+def infer_results_file_from_manual_rewrites(rewrites_file):
+    output_stem = parse_output_stem_from_path(rewrites_file)
+    results_file = build_search_results_path_from_stem(output_stem)
+    if not results_file.exists():
+        raise RuntimeError(
+            f"Could not find matching search results JSON for {rewrites_file}. Expected {results_file}."
         )
-    return rows
+    return results_file, output_stem
 
 
 def build_manual_rewrite_prompt(keyword, results):
@@ -351,7 +343,7 @@ def build_rewrite_prompt(keyword, result):
         f"Keyword: {keyword}\n"
         f"Search result title: {result.get('title', '')}\n"
         f"Source post: {result.get('content') or result.get('title') or ''}\n"
-        "Rewrite this into a polished Japanese Threads post suitable for scheduled posting."
+        "Rewrite this into a polished Japanese Threads post."
     )
 
 
@@ -513,22 +505,6 @@ def rewrite_post_texts(results, keyword, provider, model, remote_model, timeout)
     return rewritten_results, last_provider, last_model
 
 
-def write_csv(output_path, headers, rows):
-    with output_path.open("w", encoding="utf-8-sig", newline="") as csv_file:
-        writer = csv.writer(csv_file)
-        writer.writerow(headers)
-        writer.writerows(rows)
-
-
-def create_schedule_csv(payload, output_stem, start_date, start_time, interval_minutes, status):
-    ensure_output_dirs()
-    start_at = parse_start_datetime(start_date, start_time)
-    output_path = SCHEDULES_DIR / f"{output_stem}.csv"
-    rows = build_schedule_rows(payload["results"], start_at, interval_minutes, status)
-    write_csv(output_path, SCHEDULE_HEADERS, rows)
-    return output_path
-
-
 def has_explicit_ai_flags(argv):
     ai_flags = {
         "--llm-provider",
@@ -541,9 +517,9 @@ def has_explicit_ai_flags(argv):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Search Threads by keyword, rewrite posts, and save a schedule CSV."
+        description="Search Threads by keyword and prepare rewritten post text."
     )
-    parser.add_argument("keyword", help="Keyword to search")
+    parser.add_argument("keyword", nargs="?", help="Keyword to search")
     parser.add_argument(
         "--limit",
         type=int,
@@ -554,27 +530,6 @@ def main():
         "--json",
         action="store_true",
         help="Print the full payload as JSON too",
-    )
-    parser.add_argument(
-        "--start-date",
-        default=datetime.now().strftime("%Y-%m-%d"),
-        help="Schedule start date in YYYY-MM-DD format",
-    )
-    parser.add_argument(
-        "--start-time",
-        default="10:00",
-        help="Schedule start time in HH:MM format",
-    )
-    parser.add_argument(
-        "--interval-minutes",
-        type=int,
-        default=60,
-        help="Minutes between each scheduled post",
-    )
-    parser.add_argument(
-        "--status",
-        default="投稿予約中",
-        help="Status text to write into the schedule sheet",
     )
     parser.add_argument(
         "--no-ai",
@@ -626,18 +581,30 @@ def main():
     args = parser.parse_args()
 
     loaded_results_path = None
-    if args.results_file:
+    output_stem = None
+
+    if args.manual_rewrites_file and not args.results_file and not args.use_saved:
+        loaded_results_path, output_stem = infer_results_file_from_manual_rewrites(
+            args.manual_rewrites_file
+        )
+    elif args.results_file:
         loaded_results_path = args.results_file
+        output_stem = parse_output_stem_from_path(args.results_file)
     elif args.use_saved:
+        if not args.keyword:
+            raise RuntimeError("Keyword is required when using --use-saved.")
         loaded_results_path = find_latest_search_results_file(args.keyword)
         if loaded_results_path is None:
             raise RuntimeError(
                 f"No saved search results found for keyword '{args.keyword}' in {SEARCH_RESULTS_DIR}"
             )
+        output_stem = parse_output_stem_from_path(loaded_results_path)
 
     if loaded_results_path:
         payload = load_search_results(loaded_results_path)
     else:
+        if not args.keyword:
+            raise RuntimeError("Keyword is required unless --manual-rewrites-file points to a saved run.")
         payload = search_threads_posts(args.keyword, args.limit)
 
     use_manual_browser = (
@@ -661,7 +628,8 @@ def main():
     rewrite_model_used = None
     manual_prompt_path = None
     manual_response_template_path = None
-    output_stem = build_output_stem(args.keyword)
+    if output_stem is None:
+        output_stem = build_output_stem(payload["keyword"])
 
     if args.manual_rewrites_file:
         payload["results"] = apply_manual_rewrites(
@@ -691,26 +659,13 @@ def main():
     results = payload["results"]
 
     search_results_path = None
-    schedule_path = None
 
     search_results_path = save_search_results(payload, output_stem)
-
-    if not use_manual_browser:
-        schedule_path = create_schedule_csv(
-            payload,
-            output_stem,
-            args.start_date,
-            args.start_time,
-            args.interval_minutes,
-            args.status,
-        )
 
     if args.json:
         print(json.dumps(payload, ensure_ascii=False, indent=2))
         if search_results_path:
             print(f"\nsaved_results: {search_results_path}")
-        if schedule_path:
-            print(f"saved_schedule: {schedule_path}")
         if manual_prompt_path:
             print(f"manual_prompt: {manual_prompt_path}")
         if manual_response_template_path:
@@ -730,8 +685,6 @@ def main():
         print(f"loaded_results: {loaded_results_path}")
     if search_results_path:
         print(f"saved_results: {search_results_path}")
-    if schedule_path:
-        print(f"saved_schedule: {schedule_path}")
     if manual_prompt_path:
         print(f"manual_prompt: {manual_prompt_path}")
     if manual_response_template_path:
