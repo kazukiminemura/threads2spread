@@ -3,8 +3,11 @@ from datetime import datetime
 import json
 import os
 from pathlib import Path
+import re
+import shutil
 import subprocess
 import sys
+import webbrowser
 
 from dotenv import load_dotenv
 from playwright.sync_api import Error as PlaywrightError
@@ -18,9 +21,12 @@ load_dotenv()
 THREADS_HOME_URL = "https://www.threads.com/"
 THREADS_SEARCH_URL = "https://www.threads.com/search"
 PROFILE_DIR = Path(".playwright-threads-profile")
+CHATGPT_PROFILE_DIR = Path(".playwright-chatgpt-profile")
 OUTPUT_DIR = Path("outputs")
 SEARCH_RESULTS_DIR = OUTPUT_DIR / "search_results"
 MANUAL_REWRITE_DIR = OUTPUT_DIR / "manual_rewrite"
+CHATGPT_URL = os.getenv("CHATGPT_URL", "https://chatgpt.com/")
+CHATGPT_TIMEOUT_MS = int(os.getenv("CHATGPT_TIMEOUT_MS", "600000"))
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:7b")
 OLLAMA_TIMEOUT = int(os.getenv("OLLAMA_TIMEOUT", "600"))
@@ -44,6 +50,16 @@ SEARCH_INPUT_SELECTORS = [
     'input[aria-label*="search"]',
     'input[type="search"]',
     "input",
+]
+CHATGPT_INPUT_SELECTORS = [
+    "textarea",
+    "div[contenteditable='true'][data-placeholder]",
+    "div[contenteditable='true']",
+]
+CHATGPT_ASSISTANT_MESSAGE_SELECTORS = [
+    "[data-message-author-role='assistant']",
+    "article[data-testid*='conversation-turn']",
+    "main article",
 ]
 REWRITE_PROMPT = """You rewrite Threads search results into concise Japanese Threads posts.
 
@@ -94,6 +110,27 @@ def launch_threads_context(playwright):
         )
 
 
+def launch_chatgpt_context(playwright):
+    try:
+        return playwright.chromium.launch_persistent_context(
+            str(CHATGPT_PROFILE_DIR),
+            headless=False,
+            locale=BROWSER_LOCALE,
+            timezone_id=BROWSER_TIMEZONE,
+        )
+    except PlaywrightError as exc:
+        error_text = str(exc).lower()
+        if "executable doesn't exist" not in error_text and "please run the following command" not in error_text:
+            raise
+        ensure_playwright_chromium()
+        return playwright.chromium.launch_persistent_context(
+            str(CHATGPT_PROFILE_DIR),
+            headless=False,
+            locale=BROWSER_LOCALE,
+            timezone_id=BROWSER_TIMEZONE,
+        )
+
+
 def find_search_input(page):
     for selector in SEARCH_INPUT_SELECTORS:
         locator = page.locator(selector).first
@@ -101,6 +138,17 @@ def find_search_input(page):
             continue
         try:
             locator.wait_for(state="visible", timeout=3000)
+            return locator, selector
+        except PlaywrightTimeoutError:
+            continue
+    return None, None
+
+
+def find_visible_locator(page, selectors, timeout=3000):
+    for selector in selectors:
+        locator = page.locator(selector).first
+        try:
+            locator.wait_for(state="visible", timeout=timeout)
             return locator, selector
         except PlaywrightTimeoutError:
             continue
@@ -134,17 +182,25 @@ def extract_results(page, limit):
         link = item.get("href", "")
         text = item.get("text", "")
         content = item.get("content", "")
-        if "/@" not in link and "/post/" not in link:
+        if "/post/" not in link:
             continue
         if "threads.com" not in link:
             continue
         if link in seen:
             continue
+        normalized_content = (content or text).strip()
+        if len(normalized_content) < 20:
+            continue
+        non_empty_lines = [line.strip() for line in normalized_content.splitlines() if line.strip()]
+        if len(non_empty_lines) < 3:
+            continue
+        if len("".join(non_empty_lines[2:]).strip()) < 10:
+            continue
         seen.add(link)
         results.append(
             {
                 "title": text,
-                "content": content or text,
+                "content": normalized_content,
                 "link": link,
             }
         )
@@ -302,6 +358,106 @@ def save_manual_rewrite_files(payload, output_stem):
     return prompt_path, response_template_path
 
 
+def open_url_in_browser(url):
+    if webbrowser.open(url):
+        return
+
+    commands = []
+    if sys.platform.startswith("linux") and shutil.which("xdg-open"):
+        commands.append(["xdg-open", url])
+    elif sys.platform == "darwin" and shutil.which("open"):
+        commands.append(["open", url])
+
+    for command in commands:
+        try:
+            subprocess.Popen(command)
+            return
+        except OSError:
+            continue
+
+    raise RuntimeError(f"Could not open browser automatically for {url}")
+
+
+def open_chatgpt_browser(prompt_path):
+    open_url_in_browser(CHATGPT_URL)
+    open_url_in_browser(prompt_path.resolve().as_uri())
+
+
+def normalize_chatgpt_output_lines(text):
+    lines = []
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            continue
+        match = re.match(r"^(\d+)[\.\)]\s*(.*)$", line)
+        if match:
+            line = match.group(2).strip()
+        if not line:
+            continue
+        lines.append(line)
+    return lines
+
+
+def extract_chatgpt_response_lines(page, expected_count):
+    for selector in CHATGPT_ASSISTANT_MESSAGE_SELECTORS:
+        locator = page.locator(selector)
+        count = locator.count()
+        if count == 0:
+            continue
+        for index in range(count - 1, -1, -1):
+            text = locator.nth(index).inner_text().strip()
+            if not text:
+                continue
+            lines = normalize_chatgpt_output_lines(text)
+            if len(lines) >= expected_count:
+                return lines[:expected_count]
+    return []
+
+
+def rewrite_with_chatgpt_browser(prompt_text, response_template_path, expected_count, timeout_ms):
+    with sync_playwright() as p:
+        context = launch_chatgpt_context(p)
+        page = context.new_page()
+        page.goto(CHATGPT_URL, wait_until="domcontentloaded", timeout=60000)
+
+        input_box, selector = find_visible_locator(page, CHATGPT_INPUT_SELECTORS, timeout=timeout_ms)
+        if input_box is None:
+            context.close()
+            raise RuntimeError(
+                "ChatGPT input box was not found. If ChatGPT is asking you to log in, complete the login in the opened browser and run the command again."
+            )
+
+        input_box.click()
+        if selector == "textarea":
+            input_box.fill(prompt_text)
+        else:
+            page.keyboard.insert_text(prompt_text)
+        page.keyboard.press("Enter")
+
+        deadline = datetime.now().timestamp() + (timeout_ms / 1000)
+        collected_lines = []
+        while datetime.now().timestamp() < deadline:
+            page.wait_for_timeout(3000)
+            collected_lines = extract_chatgpt_response_lines(page, expected_count)
+            if len(collected_lines) >= expected_count:
+                break
+
+        context.close()
+
+    if len(collected_lines) < expected_count:
+        raise RuntimeError(
+            f"ChatGPT browser rewrite did not return enough lines. Expected {expected_count}, got {len(collected_lines)}."
+        )
+
+    response_template_path.write_text(
+        "\n".join(f"{index}. {line}" for index, line in enumerate(collected_lines, start=1)) + "\n",
+        encoding="utf-8",
+    )
+    return collected_lines
+
+
 def load_manual_rewrites(rewrites_file):
     lines = rewrites_file.read_text(encoding="utf-8").splitlines()
     rewrites = []
@@ -309,10 +465,11 @@ def load_manual_rewrites(rewrites_file):
         line = raw_line.strip()
         if not line:
             continue
-        if ". " in line:
-            prefix, remainder = line.split(". ", 1)
-            if prefix.isdigit():
-                line = remainder.strip()
+        match = re.match(r"^(\d+)\.\s*(.*)$", line)
+        if match:
+            line = match.group(2).strip()
+        if not line:
+            continue
         rewrites.append(line)
     return rewrites
 
@@ -542,6 +699,17 @@ def main():
         help="Create ChatGPT/browser prompt files. This is now the default flow.",
     )
     parser.add_argument(
+        "--no-open-browser",
+        action="store_true",
+        help="Do not automatically open ChatGPT and the generated prompt file in the browser",
+    )
+    parser.add_argument(
+        "--chatgpt-timeout-ms",
+        type=int,
+        default=CHATGPT_TIMEOUT_MS,
+        help="Timeout in milliseconds for the ChatGPT browser rewrite flow",
+    )
+    parser.add_argument(
         "--manual-rewrites-file",
         type=Path,
         help="Load rewritten posts from a text file created after the browser ChatGPT step",
@@ -628,6 +796,7 @@ def main():
     rewrite_model_used = None
     manual_prompt_path = None
     manual_response_template_path = None
+    manual_browser_error = None
     if output_stem is None:
         output_stem = build_output_stem(payload["keyword"])
 
@@ -645,6 +814,22 @@ def main():
             payload,
             output_stem,
         )
+        if not args.no_open_browser:
+            try:
+                prompt_text = manual_prompt_path.read_text(encoding="utf-8")
+                rewritten_lines = rewrite_with_chatgpt_browser(
+                    prompt_text,
+                    manual_response_template_path,
+                    len(payload["results"]),
+                    args.chatgpt_timeout_ms,
+                )
+                payload["results"] = apply_manual_rewrites(payload, rewritten_lines)
+                payload["rewrite_provider"] = "chatgpt_browser"
+                payload["rewrite_model"] = "chatgpt_browser"
+                rewrite_provider_used = payload["rewrite_provider"]
+                rewrite_model_used = payload["rewrite_model"]
+            except RuntimeError as exc:
+                manual_browser_error = str(exc)
     elif not args.no_ai:
         payload["results"], rewrite_provider_used, rewrite_model_used = rewrite_post_texts(
             payload["results"],
@@ -670,6 +855,8 @@ def main():
             print(f"manual_prompt: {manual_prompt_path}")
         if manual_response_template_path:
             print(f"manual_rewrites_template: {manual_response_template_path}")
+        if manual_browser_error:
+            print(f"manual_browser_error: {manual_browser_error}")
         return
 
     print(f"keyword: {payload['keyword']}")
@@ -689,6 +876,8 @@ def main():
         print(f"manual_prompt: {manual_prompt_path}")
     if manual_response_template_path:
         print(f"manual_rewrites_template: {manual_response_template_path}")
+    if manual_browser_error:
+        print(f"manual_browser_error: {manual_browser_error}")
 
     if not results:
         print("No matching Threads results found")

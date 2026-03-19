@@ -83,17 +83,19 @@ The default behavior is simple:
 - You only need to pass a keyword.
 - The script searches Threads.
 - It creates ChatGPT/browser prompt files by default.
+- It opens ChatGPT in the browser and tries to submit the generated prompt automatically.
 - It saves the raw search results automatically.
 - It waits for you to import rewritten lines as final post text.
 
 Manual browser ChatGPT workflow:
 
 1. Run `search_top_keyword.py "keyword"`
-2. Open the generated `*_chatgpt_prompt.txt` file and paste it into ChatGPT in your browser
-3. Put ChatGPT's rewritten lines into the generated `*_rewritten.txt` file, one line per post
+2. ChatGPT opens in your browser and the script tries to send the generated prompt automatically
+3. If automatic browser rewrite does not complete, use the generated `*_chatgpt_prompt.txt` and put ChatGPT's rewritten lines into `*_rewritten.txt`, one line per post
 4. Run `search_top_keyword.py --manual-rewrites-file <that rewritten file>`
 
 This browser/manual flow is now the default. The script saves the search results and prompt files first, and it imports the rewritten lines only after you pass `--manual-rewrites-file`. It automatically finds the matching saved search results JSON from the same run.
+If you do not want the browser to open automatically, pass `--no-open-browser`.
 
 AI rewrite modes:
 
