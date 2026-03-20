@@ -74,7 +74,7 @@ python3 -m venv venv
 ./venv/bin/python -m playwright install-deps
 ```
 
-`search_threads_top_keyword.py` は初回起動時に上の 2 コマンドを自動実行し、成功後は `.playwright-installed` を作って次回以降はスキップします。
+`search_threads_top_keyword.py` と `append_csv_to_google_sheet.py` は初回起動時に上の 2 コマンドを自動実行します。完了状態は `.playwright-browser-installed` と `.playwright-deps-installed` で個別に管理し、旧 `.playwright-installed` しかない環境でも不足分を自動補完します。
 
 ### 3. OpenClaw
 

@@ -3,18 +3,16 @@ from datetime import datetime
 import json
 import os
 from pathlib import Path
-import subprocess
-import sys
 
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import sync_playwright
+from playwright_runtime import ensure_playwright_chromium, ensure_playwright_runtime
 
 
 THREADS_HOME_URL = "https://www.threads.com/"
 THREADS_SEARCH_URL = "https://www.threads.com/search"
 PROFILE_DIR = Path(".playwright-threads-profile")
-PLAYWRIGHT_SETUP_MARKER = Path(".playwright-installed")
 OUTPUT_DIR = Path("outputs/search_results")
 DEFAULT_LIMIT = 10
 BROWSER_LOCALE = "ja-JP"
@@ -37,31 +35,6 @@ def should_run_headless():
     if value is not None:
         return value.strip().lower() not in {"0", "false", "no", "off"}
     return True
-
-
-def ensure_playwright_chromium():
-    subprocess.run(
-        [sys.executable, "-m", "playwright", "install", "chromium"],
-        check=True,
-    )
-
-
-def ensure_playwright_runtime():
-    if PLAYWRIGHT_SETUP_MARKER.exists():
-        return
-
-    subprocess.run(
-        [sys.executable, "-m", "playwright", "install"],
-        check=True,
-    )
-    subprocess.run(
-        [sys.executable, "-m", "playwright", "install-deps"],
-        check=True,
-    )
-    PLAYWRIGHT_SETUP_MARKER.write_text(
-        datetime.now().isoformat(timespec="seconds"),
-        encoding="utf-8",
-    )
 
 
 def clear_stale_profile_locks():

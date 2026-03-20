@@ -1,16 +1,14 @@
 import argparse
 import csv
-from datetime import datetime
 import os
 from pathlib import Path
-import subprocess
-import sys
 from urllib.parse import parse_qs, urlparse
 
 from dotenv import load_dotenv
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import sync_playwright
+from playwright_runtime import ensure_playwright_chromium, ensure_playwright_runtime
 
 try:
     from google.oauth2.service_account import Credentials
@@ -21,28 +19,8 @@ except ImportError:
 
 
 CSV_OUTPUT_DIR = Path("outputs/post_csv")
-PLAYWRIGHT_SETUP_MARKER = Path(".playwright-installed")
 GOOGLE_SHEETS_PROFILE_DIR = Path(".playwright-google-sheets-profile")
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
-
-
-def ensure_playwright_runtime():
-    if PLAYWRIGHT_SETUP_MARKER.exists():
-        return
-
-    subprocess.run([sys.executable, "-m", "playwright", "install"], check=True)
-    subprocess.run([sys.executable, "-m", "playwright", "install-deps"], check=True)
-    PLAYWRIGHT_SETUP_MARKER.write_text(
-        datetime.now().isoformat(timespec="seconds"),
-        encoding="utf-8",
-    )
-
-
-def ensure_playwright_chromium():
-    subprocess.run(
-        [sys.executable, "-m", "playwright", "install", "chromium"],
-        check=True,
-    )
 
 
 def launch_google_sheets_context(playwright):
