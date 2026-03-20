@@ -8,6 +8,8 @@ Threads の検索結果を集めて JSON に保存し、その JSON をもとに
   Threads をキーワード検索し、上位投稿を `outputs/search_results/` に JSON 保存します。
 - `generate_threads_content.py`
   検索結果 JSON を OpenClaw の ACP runtime backend に渡し、投稿案を `outputs/generated_posts/` に JSON 保存します。
+- `export_threads_csv.py`
+  生成済みの投稿案 JSON を、予約投稿用の CSV に変換します。
 
 ## Requirements
 
@@ -132,6 +134,49 @@ JSON も標準出力したい場合:
 - `posts`
 - `raw_response`
 
+## 3. 生成済み JSON から投稿予約用 CSV を作成
+
+最新の `outputs/generated_posts/*.json` を読み込み、次の列順で CSV を作成します。
+
+- `ID`
+- `投稿内容`
+- `予定日付`
+- `予定時刻`
+- `ステータス`
+- `投稿URL`
+- `ツリーID`
+- `投稿順序`
+- `動画URL`
+- `画像URL_1枚目` から `画像URL_10枚目`
+
+基本実行:
+
+```bash
+./venv/bin/python export_threads_csv.py
+```
+
+特定の JSON を指定する場合:
+
+```bash
+./venv/bin/python export_threads_csv.py \
+  --input-file outputs/generated_posts/20260320_180000_intel_threads_posts.json
+```
+
+予定日付と予定時刻を一括指定する場合:
+
+```bash
+./venv/bin/python export_threads_csv.py \
+  --scheduled-date 2126/03/19 \
+  --scheduled-time 23:45
+```
+
+出力先:
+
+- `outputs/post_csv/<input_filename>.csv`
+
+現在の `generate_threads_content.py` の出力には画像 URL やツリー情報がないため、それらの列は空欄になります。  
+将来 JSON 側に `thread_id`, `post_order`, `video_url`, `image_urls` などを入れれば、そのまま CSV に反映されます。
+
 ## 実行フロー
 
 ### 検索フロー
@@ -151,6 +196,12 @@ JSON も標準出力したい場合:
 5. ACP runtime backend に prompt を送る
 6. 返ってきた内容から投稿案 JSON を保存する
 
+### CSV 変換フロー
+
+1. 最新または指定された投稿案 JSON を読む
+2. 投稿本文を予約投稿 CSV の列に割り当てる
+3. `outputs/post_csv/` に CSV 保存する
+
 ## 注意点
 
 - Threads 検索はブラウザ表示やログイン状態に依存します。
@@ -163,4 +214,5 @@ JSON も標準出力したい場合:
 - [Readme.md](/home/threads-001/projects/threads2spread/Readme.md)
 - [search_threads_top_keyword.py](/home/threads-001/projects/threads2spread/search_threads_top_keyword.py)
 - [generate_threads_content.py](/home/threads-001/projects/threads2spread/generate_threads_content.py)
+- [export_threads_csv.py](/home/threads-001/projects/threads2spread/export_threads_csv.py)
 - [requirements.txt](/home/threads-001/projects/threads2spread/requirements.txt)
