@@ -1,6 +1,7 @@
 import argparse
 from datetime import datetime
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -31,6 +32,13 @@ SEARCH_INPUT_SELECTORS = [
 ]
 
 
+def should_run_headless():
+    value = os.environ.get("THREADS_HEADLESS")
+    if value is not None:
+        return value.strip().lower() not in {"0", "false", "no", "off"}
+    return not bool(os.environ.get("DISPLAY"))
+
+
 def ensure_playwright_chromium():
     subprocess.run(
         [sys.executable, "-m", "playwright", "install", "chromium"],
@@ -56,22 +64,38 @@ def ensure_playwright_runtime():
     )
 
 
+def clear_stale_profile_locks():
+    for name in ("SingletonLock", "SingletonSocket", "SingletonCookie"):
+        path = PROFILE_DIR / name
+        if path.exists() or path.is_symlink():
+            path.unlink()
+
+
 def launch_threads_context(playwright):
+    headless = should_run_headless()
     try:
         return playwright.chromium.launch_persistent_context(
             str(PROFILE_DIR),
-            headless=False,
+            headless=headless,
             locale=BROWSER_LOCALE,
             timezone_id=BROWSER_TIMEZONE,
         )
     except PlaywrightError as exc:
         error_text = str(exc).lower()
+        if "processsingleton" in error_text or "profile directory is already in use" in error_text:
+            clear_stale_profile_locks()
+            return playwright.chromium.launch_persistent_context(
+                str(PROFILE_DIR),
+                headless=headless,
+                locale=BROWSER_LOCALE,
+                timezone_id=BROWSER_TIMEZONE,
+            )
         if "executable doesn't exist" not in error_text and "please run the following command" not in error_text:
             raise
         ensure_playwright_chromium()
         return playwright.chromium.launch_persistent_context(
             str(PROFILE_DIR),
-            headless=False,
+            headless=headless,
             locale=BROWSER_LOCALE,
             timezone_id=BROWSER_TIMEZONE,
         )
