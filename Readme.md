@@ -207,6 +207,21 @@ service account を使って Google Sheets API 経由で追記したい場合:
   --service-account-file /absolute/path/to/service-account.json
 ```
 
+Google Cloud の設定手順:
+
+1. Google Cloud Console を開く
+2. 右上でプロジェクトを選ぶ。なければ新規作成
+3. `APIs とサービス` → `ライブラリ`
+4. `Google Sheets API` を検索して `有効にする`
+5. `IAM と管理` → `サービス アカウント`
+6. `サービス アカウントを作成`
+7. 名前だけ入れて作成
+8. 作成したサービスアカウントを開く
+9. `キー` タブ → `鍵を追加` → `新しい鍵を作成`
+10. `JSON` を選んで作成
+11. ダウンロードされた JSON を安全な場所に置く
+    例: `/home/threads-001/keys/google-sheets-sa.json`
+
 ヘッダー行も含めて追記する場合:
 
 ```bash
