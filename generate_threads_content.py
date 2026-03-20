@@ -230,7 +230,6 @@ def ensure_gateway_ready(openclaw_bin, env, port, token, timeout_seconds):
             "--token",
             token,
             "--allow-unconfigured",
-            "--force",
             "--port",
             str(port),
         ],
