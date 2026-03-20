@@ -1,0 +1,19 @@
+keywords:
+  - 金運
+
+generate:
+  count: 5
+  content_length: medium
+  timeout_seconds: 600
+  # max_chars: 120
+
+sheets:
+  append: true
+  mode: api
+  dedupe: true
+
+schedule:
+  daily_time: "07:00"
+
+workflow:
+  retry_count: 1
