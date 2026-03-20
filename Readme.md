@@ -26,6 +26,13 @@ Threads の検索結果を集めて JSON に保存し、その JSON をもとに
 4. `append_csv_to_google_sheet.py`
    作成した CSV を Google スプレッドシートに追記し、予約投稿用の管理表として使える状態にします。
 
+### 完全自動化
+```bash
+crontab -e
+0 9,21 * * * docker exec openclaw openclaw run /root/.openclaw/workspace/threads2spread/venv/bin/python /root/.openclaw/workspace/threads2spread/run_workflow.py >> /var/log/openclaw.log 2>&1
+```
+
+
 ### 最短の使い方
 
 たとえば `金運` というキーワードで一連の流れを実行する場合は次のとおりです。
