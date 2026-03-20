@@ -10,6 +10,8 @@ Threads の検索結果を集めて JSON に保存し、その JSON をもとに
   検索結果 JSON を OpenClaw の ACP runtime backend に渡し、投稿案を `outputs/generated_posts/` に JSON 保存します。
 - `export_threads_csv.py`
   生成済みの投稿案 JSON を、予約投稿用の CSV に変換します。
+- `append_csv_to_google_sheet.py`
+  生成済みの CSV を Google スプレッドシートに追記します。
 
 ## Requirements
 
@@ -177,6 +179,53 @@ JSON も標準出力したい場合:
 現在の `generate_threads_content.py` の出力には画像 URL やツリー情報がないため、それらの列は空欄になります。  
 将来 JSON 側に `thread_id`, `post_order`, `video_url`, `image_urls` などを入れれば、そのまま CSV に反映されます。
 
+## 4. CSV を Google スプレッドシートに追記
+
+最新の `outputs/post_csv/*.csv` を、次の Google スプレッドシートの指定タブ末尾に追記します。
+
+- `https://docs.google.com/spreadsheets/d/1ybZ7itDhxvhPItmxbtIITcXVA-PvKPTCsoQs8Cmx4SE/edit?pli=1&gid=1614552414#gid=1614552414`
+
+事前に必要なもの:
+
+- Google Sheets API が有効な Google Cloud プロジェクト
+- 対象スプレッドシートに編集権限を持つ service account
+- service account の JSON キー
+- その JSON パスを `.env` の `GOOGLE_SERVICE_ACCOUNT_FILE` または CLI 引数で指定
+
+`.env` の例:
+
+```bash
+GOOGLE_SERVICE_ACCOUNT_FILE=/absolute/path/to/service-account.json
+```
+
+基本実行:
+
+```bash
+./venv/bin/python append_csv_to_google_sheet.py
+```
+
+特定の CSV を指定する場合:
+
+```bash
+./venv/bin/python append_csv_to_google_sheet.py \
+  --csv-file outputs/post_csv/20260329_081024_nvidia_threads_posts.csv
+```
+
+service account ファイルを直接指定する場合:
+
+```bash
+./venv/bin/python append_csv_to_google_sheet.py \
+  --service-account-file /absolute/path/to/service-account.json
+```
+
+ヘッダー行も含めて追記する場合:
+
+```bash
+./venv/bin/python append_csv_to_google_sheet.py --include-header
+```
+
+デフォルトではヘッダー行を除いたデータ行だけを、URL 内の `gid=1614552414` に対応するシート末尾へ追記します。
+
 ## 実行フロー
 
 ### 検索フロー
@@ -202,11 +251,20 @@ JSON も標準出力したい場合:
 2. 投稿本文を予約投稿 CSV の列に割り当てる
 3. `outputs/post_csv/` に CSV 保存する
 
+### Google Sheets 追記フロー
+
+1. 最新または指定された CSV を読む
+2. スプレッドシートURLから spreadsheet id と gid を取り出す
+3. service account で Google Sheets API に接続する
+4. gid に対応するシートを見つける
+5. CSV の内容をシート末尾へ追記する
+
 ## 注意点
 
 - Threads 検索はブラウザ表示やログイン状態に依存します。
 - 投稿本文の抽出は Threads 側の DOM 変更で影響を受ける可能性があります。
 - `generate_threads_content.py` は OpenClaw / ACP と、その先で設定された LLM provider の状態に依存します。
+- `append_csv_to_google_sheet.py` を使うには、対象シートが service account に共有されている必要があります。
 - `outputs/` や Playwright の profile ディレクトリは通常コミットしません。
 
 ## Files
@@ -215,4 +273,5 @@ JSON も標準出力したい場合:
 - [search_threads_top_keyword.py](/home/threads-001/projects/threads2spread/search_threads_top_keyword.py)
 - [generate_threads_content.py](/home/threads-001/projects/threads2spread/generate_threads_content.py)
 - [export_threads_csv.py](/home/threads-001/projects/threads2spread/export_threads_csv.py)
+- [append_csv_to_google_sheet.py](/home/threads-001/projects/threads2spread/append_csv_to_google_sheet.py)
 - [requirements.txt](/home/threads-001/projects/threads2spread/requirements.txt)
