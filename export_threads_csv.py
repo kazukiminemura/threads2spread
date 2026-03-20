@@ -1,5 +1,6 @@
 import argparse
 import csv
+from datetime import datetime, timedelta
 import json
 from pathlib import Path
 
@@ -28,6 +29,9 @@ CSV_HEADERS = [
     "画像URL_9枚目",
     "画像URL_10枚目",
 ]
+DEFAULT_SLOT_MINUTES = [15, 45]
+DEFAULT_SLOT_HOURS = [9, 12, 15, 19]
+DEFAULT_START_DELAY_MINUTES = 20
 
 
 def find_latest_generated_posts_file():
@@ -60,6 +64,49 @@ def normalize_image_urls(post):
     return single_values
 
 
+def parse_schedule_start(scheduled_date, scheduled_time):
+    now = datetime.now()
+    base_date = scheduled_date or now.strftime("%Y/%m/%d")
+    base_time = scheduled_time or now.strftime("%H:%M")
+
+    try:
+        start_at = datetime.strptime(f"{base_date} {base_time}", "%Y/%m/%d %H:%M")
+    except ValueError as exc:
+        raise RuntimeError(
+            "--scheduled-date は YYYY/MM/DD、--scheduled-time は HH:MM 形式で指定してください。"
+        ) from exc
+
+    if scheduled_date is None and scheduled_time is None:
+        start_at = now + timedelta(minutes=DEFAULT_START_DELAY_MINUTES)
+
+    return start_at
+
+
+def round_up_to_next_slot(base_datetime):
+    candidate = base_datetime.replace(second=0, microsecond=0)
+    for day_offset in range(14):
+        current_day = candidate.date() + timedelta(days=day_offset)
+        for hour in DEFAULT_SLOT_HOURS:
+            for minute in DEFAULT_SLOT_MINUTES:
+                slot = datetime.combine(current_day, datetime.min.time()).replace(hour=hour, minute=minute)
+                if slot >= candidate:
+                    return slot
+    raise RuntimeError("予約枠を計算できませんでした。")
+
+
+def build_safe_schedule(posts_count, scheduled_date, scheduled_time):
+    start_at = parse_schedule_start(scheduled_date, scheduled_time)
+    first_slot = round_up_to_next_slot(start_at)
+    slots = []
+    current_slot = first_slot
+
+    while len(slots) < posts_count:
+        slots.append(current_slot)
+        current_slot = round_up_to_next_slot(current_slot + timedelta(minutes=1))
+
+    return slots
+
+
 def post_to_row(post, row_id, scheduled_date, scheduled_time, default_status):
     image_urls = normalize_image_urls(post)
     row = {
@@ -82,16 +129,17 @@ def post_to_row(post, row_id, scheduled_date, scheduled_time, default_status):
 
 def export_posts_to_csv(source_payload, output_path, scheduled_date, scheduled_time, default_status):
     posts = source_payload.get("posts", [])
+    schedule_slots = build_safe_schedule(len(posts), scheduled_date, scheduled_time)
     with output_path.open("w", encoding="utf-8-sig", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=CSV_HEADERS)
         writer.writeheader()
-        for row_id, post in enumerate(posts, start=1):
+        for row_id, (post, slot) in enumerate(zip(posts, schedule_slots), start=1):
             writer.writerow(
                 post_to_row(
                     post,
                     row_id=row_id,
-                    scheduled_date=scheduled_date,
-                    scheduled_time=scheduled_time,
+                    scheduled_date=slot.strftime("%Y/%m/%d"),
+                    scheduled_time=slot.strftime("%H:%M"),
                     default_status=default_status,
                 )
             )
