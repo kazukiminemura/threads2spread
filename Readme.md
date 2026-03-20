@@ -34,10 +34,11 @@ python3 -m venv venv
 ### 2. Playwright / Chromium
 
 ```bash
-./venv/bin/python -m playwright install chromium
+./venv/bin/python -m playwright install
+./venv/bin/python -m playwright install-deps
 ```
 
-`search_threads_top_keyword.py` は Chromium が未導入なら初回実行時に自動インストールも試みます。
+`search_threads_top_keyword.py` は初回起動時に上の 2 コマンドを自動実行し、成功後は `.playwright-installed` を作って次回以降はスキップします。
 
 ### 3. OpenClaw
 

@@ -13,6 +13,7 @@ from playwright.sync_api import sync_playwright
 THREADS_HOME_URL = "https://www.threads.com/"
 THREADS_SEARCH_URL = "https://www.threads.com/search"
 PROFILE_DIR = Path(".playwright-threads-profile")
+PLAYWRIGHT_SETUP_MARKER = Path(".playwright-installed")
 OUTPUT_DIR = Path("outputs/search_results")
 DEFAULT_LIMIT = 10
 BROWSER_LOCALE = "ja-JP"
@@ -34,6 +35,24 @@ def ensure_playwright_chromium():
     subprocess.run(
         [sys.executable, "-m", "playwright", "install", "chromium"],
         check=True,
+    )
+
+
+def ensure_playwright_runtime():
+    if PLAYWRIGHT_SETUP_MARKER.exists():
+        return
+
+    subprocess.run(
+        [sys.executable, "-m", "playwright", "install"],
+        check=True,
+    )
+    subprocess.run(
+        [sys.executable, "-m", "playwright", "install-deps"],
+        check=True,
+    )
+    PLAYWRIGHT_SETUP_MARKER.write_text(
+        datetime.now().isoformat(timespec="seconds"),
+        encoding="utf-8",
     )
 
 
@@ -246,6 +265,7 @@ def main():
     )
     args = parser.parse_args()
 
+    ensure_playwright_runtime()
     payload = search_threads_posts(args.keyword, args.limit)
     output_path = save_results(payload)
 
