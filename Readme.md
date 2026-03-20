@@ -28,6 +28,7 @@ Threads の検索結果を集めて JSON に保存し、その JSON をもとに
 
 ### 完全自動化
 ```bash
+# host system
 crontab -e
 0 9,21 * * * docker exec openclaw openclaw run /root/.openclaw/workspace/threads2spread/venv/bin/python /root/.openclaw/workspace/threads2spread/run_workflow.py >> /var/log/openclaw.log 2>&1
 ```
