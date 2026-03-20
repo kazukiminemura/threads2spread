@@ -36,7 +36,7 @@ def should_run_headless():
     value = os.environ.get("THREADS_HEADLESS")
     if value is not None:
         return value.strip().lower() not in {"0", "false", "no", "off"}
-    return not bool(os.environ.get("DISPLAY"))
+    return True
 
 
 def ensure_playwright_chromium():
