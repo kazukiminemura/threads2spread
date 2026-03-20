@@ -78,6 +78,8 @@ def parse_schedule_start(scheduled_date, scheduled_time):
 
     if scheduled_date is None and scheduled_time is None:
         start_at = now + timedelta(minutes=DEFAULT_START_DELAY_MINUTES)
+    else:
+        start_at = max(start_at, now)
 
     return start_at
 

@@ -2,7 +2,7 @@
 
 Threads の検索結果を集めて JSON に保存し、その JSON をもとに Threads 投稿案を生成するための小さなツール集です。
 
-現在の主なスクリプトは次の 2 つです。
+現在の主なスクリプトは次の 4 つです。
 
 - `search_threads_top_keyword.py`
   Threads をキーワード検索し、上位投稿を `outputs/search_results/` に JSON 保存します。
@@ -12,6 +12,39 @@ Threads の検索結果を集めて JSON に保存し、その JSON をもとに
   生成済みの投稿案 JSON を、予約投稿用の CSV に変換します。
 - `append_csv_to_google_sheet.py`
   生成済みの CSV を Google スプレッドシートに追記します。
+
+## ワークフロー概要
+
+このツールは、次の流れで `キーワード検索 → コンテンツ生成 → CSV化 → 予約投稿` を進めます。
+
+1. `search_threads_top_keyword.py`
+   指定したキーワードで Threads を検索し、上位投稿を `outputs/search_results/` に JSON 保存します。
+2. `generate_threads_content.py`
+   検索結果 JSON をもとに、Threads 投稿案を `outputs/generated_posts/` に JSON 保存します。
+3. `export_threads_csv.py`
+   生成した投稿案 JSON を、予約投稿に使える CSV に変換して `outputs/post_csv/` に保存します。
+4. `append_csv_to_google_sheet.py`
+   作成した CSV を Google スプレッドシートに追記し、予約投稿用の管理表として使える状態にします。
+
+### 最短の使い方
+
+たとえば `金運` というキーワードで一連の流れを実行する場合は次のとおりです。
+
+```bash
+./venv/bin/python search_threads_top_keyword.py "金運"
+./venv/bin/python generate_threads_content.py
+./venv/bin/python export_threads_csv.py --scheduled-date 2126/03/19 --scheduled-time 23:45
+./venv/bin/python append_csv_to_google_sheet.py
+```
+
+各ステップの出力は次のステップの入力になります。
+
+- 検索結果 JSON
+  `outputs/search_results/` に保存され、コンテンツ生成で使われます。
+- 投稿案 JSON
+  `outputs/generated_posts/` に保存され、CSV 化で使われます。
+- 予約投稿 CSV
+  `outputs/post_csv/` に保存され、Google スプレッドシートへの追記に使われます。
 
 ## Requirements
 
