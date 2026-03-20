@@ -32,10 +32,10 @@ CSV_HEADERS = [
 
 def find_latest_generated_posts_file():
     GENERATED_POSTS_DIR.mkdir(parents=True, exist_ok=True)
-    candidates = sorted(GENERATED_POSTS_DIR.glob("*.json"))
+    candidates = list(GENERATED_POSTS_DIR.glob("*.json"))
     if not candidates:
         raise RuntimeError(f"{GENERATED_POSTS_DIR} に生成済みJSONが見つかりませんでした。")
-    return candidates[-1]
+    return max(candidates, key=lambda path: path.stat().st_mtime)
 
 
 def load_generated_posts(path):
