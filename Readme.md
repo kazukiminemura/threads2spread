@@ -1,126 +1,180 @@
-# Threads OAuth Test Script
+# threads2spread
 
-`threads_oauth_authorize.py` now supports a full local OAuth login flow for Threads.
+Threads の検索結果を集めて JSON に保存し、その JSON をもとに Threads 投稿案を生成するための小さなツール集です。
 
-Example:
+現在の主なスクリプトは次の 2 つです。
 
-```bash
-export THREADS_APP_ID="your-app-id"
-export THREADS_APP_SECRET="your-app-secret"
-export REDIRECT_URI="http://127.0.0.1:8787/callback"
-export SCOPE="threads_basic"
+- `search_threads_top_keyword.py`
+  Threads をキーワード検索し、上位投稿を `outputs/search_results/` に JSON 保存します。
+- `generate_threads_content.py`
+  検索結果 JSON を OpenClaw の ACP runtime backend に渡し、投稿案を `outputs/generated_posts/` に JSON 保存します。
 
-python3 threads_oauth_authorize.py
-```
+## Requirements
 
-That flow:
+- Python 3.10+
+- Playwright / Chromium
+- OpenClaw
+- Ollama
 
-- opens the OAuth page in your browser
-- listens on your local redirect URI
-- exchanges the code for a token
-- upgrades to a long-lived token by default
-- saves `ACCESS_TOKEN` into `.env`
-
-If you only want the raw authorize URL:
+`requirements.txt`:
 
 ```bash
-export REDIRECT_URI="https://example.com/callback"
-export SCOPE="threads_basic"
-export STATE="debug-state"
-
-python3 threads_oauth_authorize.py --url-only
+pip install -r requirements.txt
 ```
 
-You can also pass values as flags:
+## Setup
 
-```bash
-python3 threads_oauth_authorize.py \
-  --client-id "your-app-id" \
-  --client-secret "your-app-secret" \
-  --redirect-uri "https://example.com/callback" \
-  --scope "threads_basic" \
-  --state "debug-state" \
-  --url-only
-```
-
-Setup for the browser-based Threads search script:
+### 1. Python 環境
 
 ```bash
 python3 -m venv venv
 ./venv/bin/pip install -r requirements.txt
-sudo apt-get update
-sudo apt-get install -y libnspr4 libnss3 libasound2t64 fonts-noto-cjk ibglib2.0-0
-npx playwright install --with-deps chromium
-apt-get install -y xvfb
-sudo apt install language-pack-ja-base language-pack-ja
 ```
 
-If Chromium has not been installed yet, `search_top_keyword.py` now tries to run `python -m playwright install chromium` automatically on first use.
-
-Search Threads in the browser:
+### 2. Playwright / Chromium
 
 ```bash
-./venv/bin/python search_top_keyword.py "openai"
-./venv/bin/python search_top_keyword.py "openai" --json
-./venv/bin/python search_top_keyword.py --manual-rewrites-file outputs/manual_rewrite/20260320_120000_openai_rewritten.txt
-./venv/bin/python search_top_keyword.py "openai" --no-ai
-./venv/bin/python search_top_keyword.py "openai" --llm-provider auto
-./venv/bin/python search_top_keyword.py "openai" --llm-provider ollama --llm-model llama3.2:3b
-./venv/bin/python search_top_keyword.py "openai" --llm-provider remote --remote-llm-model gpt-4o-mini
-./venv/bin/python search_top_keyword.py "openai" --use-saved
-./venv/bin/python search_top_keyword.py "openai" --results-file outputs/search_results/20260318_102353_openai.json
-./venv/bin/python search_top_keyword.py "openai" --llm-model qwen3:8b --remote-llm-model gpt-4o-mini --llm-timeout 600
+./venv/bin/python -m playwright install chromium
 ```
 
-Output files:
+`search_threads_top_keyword.py` は Chromium が未導入なら初回実行時に自動インストールも試みます。
 
-- Search results JSON: `outputs/search_results/<timestamp>_<keyword>.json`
-- Manual browser prompt: `outputs/manual_rewrite/<timestamp>_<keyword>_chatgpt_prompt.txt`
-- Manual browser response template: `outputs/manual_rewrite/<timestamp>_<keyword>_rewritten.txt`
+### 3. OpenClaw
 
-The default behavior is simple:
+このリポジトリでは `generate_threads_content.py` から `openclaw` コマンドを呼び出します。  
+PATH 上にない場合でも、次のユーザー領域パスは自動で探索します。
 
-- You only need to pass a keyword.
-- The script searches Threads.
-- It creates ChatGPT/browser prompt files by default.
-- It opens ChatGPT in the browser and tries to submit the generated prompt automatically.
-- It saves the raw search results automatically.
-- It waits for you to import rewritten lines as final post text.
+- `~/.npm-global/bin/openclaw`
+- `~/.local/bin/openclaw`
 
-Manual browser ChatGPT workflow:
+### 4. Ollama
 
-1. Run `search_top_keyword.py "keyword"`
-2. ChatGPT opens in your browser and the script tries to send the generated prompt automatically
-3. If automatic browser rewrite does not complete, use the generated `*_chatgpt_prompt.txt` and put ChatGPT's rewritten lines into `*_rewritten.txt`, one line per post
-4. Run `search_top_keyword.py --manual-rewrites-file <that rewritten file>`
-
-This browser/manual flow is now the default. The script saves the search results and prompt files first, and it imports the rewritten lines only after you pass `--manual-rewrites-file`. It automatically finds the matching saved search results JSON from the same run.
-If you do not want the browser to open automatically, pass `--no-open-browser`.
-
-AI rewrite modes:
-
-- `auto`: try a remote OpenAI-compatible API first, then fall back to local Ollama
-- `ollama`: only use local Ollama
-- `remote`: only use the remote API
-
-Remote API setup:
+OpenClaw 側でローカルモデルを使う前提です。たとえば:
 
 ```bash
-export REMOTE_LLM_AUTH_TOKEN="your-oauth-or-bearer-token"
-# optional overrides
-export REMOTE_LLM_BASE_URL="https://api.openai.com/v1"
-export REMOTE_LLM_MODEL="gpt-4o-mini"
+ollama list
+ollama pull qwen3.5:4b
 ```
 
-`REMOTE_LLM_AUTH_TOKEN` is the preferred setting. `REMOTE_LLM_API_KEY` and `OPENAI_API_KEY` still work as fallbacks.
+デフォルトモデルは `ollama/qwen3.5:4b` です。
 
-Local Ollama setup:
+## 1. Threads を検索して JSON 保存
+
+キーワードを検索して、上位 10 件までの結果を JSON 保存します。
 
 ```bash
-ollama pull llama3.2:3b
-export OLLAMA_MODEL="llama3.2:3b"
+./venv/bin/python search_threads_top_keyword.py "金運"
 ```
 
-You can override the local endpoint with `OLLAMA_BASE_URL`, the default provider with `LLM_PROVIDER`, and the timeout with `OLLAMA_TIMEOUT`.
-To skip AI rewriting, pass `--no-ai`.
-To skip a new Threads search, use `--use-saved` to load the latest JSON for that keyword, or `--results-file` to load a specific saved JSON file.
+JSON も標準出力したい場合:
+
+```bash
+./venv/bin/python search_threads_top_keyword.py "金運" --json
+```
+
+件数を変えたい場合:
+
+```bash
+./venv/bin/python search_threads_top_keyword.py "金運" --limit 5
+```
+
+出力先:
+
+- `outputs/search_results/<timestamp>_<keyword>.json`
+
+保存される JSON には次のような情報が含まれます。
+
+- `keyword`
+- `results_count`
+- `results[].title`
+- `results[].content`
+- `results[].link`
+
+## 2. 検索結果 JSON から投稿案を生成
+
+最新の検索結果 JSON を読み込み、OpenClaw の ACP runtime backend 経由で投稿案を生成します。
+
+```bash
+./venv/bin/python generate_threads_content.py
+```
+
+投稿数を変える場合:
+
+```bash
+./venv/bin/python generate_threads_content.py --count 5
+```
+
+長さプリセットを変える場合:
+
+```bash
+./venv/bin/python generate_threads_content.py --content-length short
+./venv/bin/python generate_threads_content.py --content-length medium
+./venv/bin/python generate_threads_content.py --content-length long
+```
+
+最大文字数で制御する場合:
+
+```bash
+./venv/bin/python generate_threads_content.py --max-chars 120
+```
+
+特定の検索結果 JSON を使う場合:
+
+```bash
+./venv/bin/python generate_threads_content.py \
+  --results-file outputs/search_results/20260320_114150_金運.json
+```
+
+モデルを変える場合:
+
+```bash
+./venv/bin/python generate_threads_content.py \
+  --openclaw-model ollama/qwen3.5:4b
+```
+
+出力先:
+
+- `outputs/generated_posts/<timestamp>_<keyword>_threads_posts.json`
+
+出力 JSON には次のような情報が入ります。
+
+- `generator`
+- `backend`
+- `model`
+- `keyword`
+- `posts`
+- `raw_response`
+
+## 実行フロー
+
+### 検索フロー
+
+1. Threads の検索画面を開く
+2. キーワードを入力する
+3. 上位投稿リンクを収集する
+4. 各投稿ページを開いて本文を抽出する
+5. `outputs/search_results/` に JSON 保存する
+
+### 投稿案生成フロー
+
+1. 最新または指定された検索結果 JSON を読む
+2. OpenClaw のモデルを設定する
+3. 一時 Gateway を起動する
+4. ACP bridge を立ち上げる
+5. ACP runtime backend に prompt を送る
+6. 返ってきた内容から投稿案 JSON を保存する
+
+## 注意点
+
+- Threads 検索はブラウザ表示やログイン状態に依存します。
+- 投稿本文の抽出は Threads 側の DOM 変更で影響を受ける可能性があります。
+- `generate_threads_content.py` は OpenClaw / ACP / Ollama の状態に依存します。
+- ローカルモデルは初回応答が遅いことがあります。
+- `outputs/` や Playwright の profile ディレクトリは通常コミットしません。
+
+## Files
+
+- [Readme.md](/home/threads-001/projects/threads2spread/Readme.md)
+- [search_threads_top_keyword.py](/home/threads-001/projects/threads2spread/search_threads_top_keyword.py)
+- [generate_threads_content.py](/home/threads-001/projects/threads2spread/generate_threads_content.py)
+- [requirements.txt](/home/threads-001/projects/threads2spread/requirements.txt)
