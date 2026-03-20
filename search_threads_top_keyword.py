@@ -87,6 +87,32 @@ def find_search_input(page):
     raise RuntimeError("Threads の検索入力欄が見つかりませんでした。")
 
 
+def submit_search_keyword(page, search_input, keyword):
+    # Threads can show floating UI that intercepts pointer events, so avoid
+    # relying on a mouse click to focus the search field.
+    page.keyboard.press("Escape")
+    search_input.scroll_into_view_if_needed()
+
+    try:
+        search_input.focus()
+        search_input.fill("")
+        search_input.type(keyword, delay=50)
+    except PlaywrightTimeoutError:
+        search_input.evaluate(
+            """
+            (element, value) => {
+              element.focus();
+              element.value = value;
+              element.dispatchEvent(new Event("input", { bubbles: true }));
+              element.dispatchEvent(new Event("change", { bubbles: true }));
+            }
+            """,
+            keyword,
+        )
+
+    search_input.press("Enter")
+
+
 def extract_results(page, limit):
     anchors = page.locator("a[href]").evaluate_all(
         """
@@ -208,9 +234,7 @@ def search_threads_posts(keyword, limit):
         page.wait_for_timeout(3000)
 
         search_input, selector = find_search_input(page)
-        search_input.click()
-        search_input.fill(keyword)
-        page.keyboard.press("Enter")
+        submit_search_keyword(page, search_input, keyword)
         page.wait_for_timeout(5000)
 
         results = extract_results(page, limit)
