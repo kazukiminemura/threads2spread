@@ -97,7 +97,6 @@ def build_openclaw_env():
         str(Path.home() / ".npm-global/bin"),
     ]
     env["PATH"] = ":".join(extra_paths + [env.get("PATH", "")])
-    env.setdefault("OLLAMA_API_KEY", "dummy")
     return env
 
 
@@ -369,11 +368,9 @@ def prompt_session(client, session_id, prompt_text, timeout_seconds):
     return "".join(chunks).strip(), result
 
 
-def generate_posts_via_acp_runtime(prompt_text, model, timeout_seconds):
+def generate_posts_via_acp_runtime(prompt_text, timeout_seconds):
     env = build_openclaw_env()
     openclaw_bin = resolve_openclaw_bin()
-
-    run_openclaw_command([openclaw_bin, "models", "set", model], env)
 
     gateway_port = find_free_port()
     gateway_token = secrets.token_urlsafe(24)
@@ -427,7 +424,7 @@ def build_output_path(keyword):
     return OUTPUT_DIR / f"{timestamp}_{safe_keyword}_threads_posts.json"
 
 
-def save_output(source_file, response_payload, raw_response, count, content_length, max_chars, model):
+def save_output(source_file, response_payload, raw_response, count, content_length, max_chars):
     keyword = response_payload.get("keyword") or "keyword"
     output_path = build_output_path(keyword)
     output = {
@@ -435,7 +432,8 @@ def save_output(source_file, response_payload, raw_response, count, content_leng
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "generator": "openclaw",
         "backend": "acp-runtime",
-        "model": model,
+        "model": response_payload.get("model"),
+        "model_source": "openclaw-config",
         "count": count,
         "content_length": content_length,
         "max_chars": max_chars,
@@ -474,11 +472,6 @@ def main():
         help="各投稿の最大文字数。指定した場合は --content-length より優先",
     )
     parser.add_argument(
-        "--openclaw-model",
-        default="ollama/qwen3.5:4b",
-        help="OpenClaw で使うモデル名",
-    )
-    parser.add_argument(
         "--timeout-seconds",
         type=int,
         default=DEFAULT_TIMEOUT_SECONDS,
@@ -501,7 +494,6 @@ def main():
     prompt_text = build_prompt(source_payload, args.count, args.content_length, args.max_chars)
     response_payload, raw_response = generate_posts_via_acp_runtime(
         prompt_text,
-        args.openclaw_model,
         args.timeout_seconds,
     )
     output_path, output = save_output(
@@ -511,7 +503,6 @@ def main():
         args.count,
         args.content_length,
         args.max_chars,
-        args.openclaw_model,
     )
 
     if args.json:

@@ -14,7 +14,6 @@ Threads の検索結果を集めて JSON に保存し、その JSON をもとに
 - Python 3.10+
 - Playwright / Chromium
 - OpenClaw
-- Ollama
 
 `requirements.txt`:
 
@@ -48,16 +47,10 @@ PATH 上にない場合でも、次のユーザー領域パスは自動で探索
 - `~/.npm-global/bin/openclaw`
 - `~/.local/bin/openclaw`
 
-### 4. Ollama
+### 4. LLM Provider 設定
 
-OpenClaw 側でローカルモデルを使う前提です。たとえば:
-
-```bash
-ollama list
-ollama pull qwen3.5:4b
-```
-
-デフォルトモデルは `ollama/qwen3.5:4b` です。
+`generate_threads_content.py` は、OpenClaw 側であらかじめ設定された LLM を使います。  
+このスクリプト自体は Ollama 前提ではなく、利用するモデルや API キーの設定は OpenClaw 側で管理する想定です。
 
 ## 1. Threads を検索して JSON 保存
 
@@ -126,13 +119,6 @@ JSON も標準出力したい場合:
   --results-file outputs/search_results/20260320_114150_金運.json
 ```
 
-モデルを変える場合:
-
-```bash
-./venv/bin/python generate_threads_content.py \
-  --openclaw-model ollama/qwen3.5:4b
-```
-
 出力先:
 
 - `outputs/generated_posts/<timestamp>_<keyword>_threads_posts.json`
@@ -159,7 +145,7 @@ JSON も標準出力したい場合:
 ### 投稿案生成フロー
 
 1. 最新または指定された検索結果 JSON を読む
-2. OpenClaw のモデルを設定する
+2. OpenClaw の設定済みモデルで実行する
 3. 一時 Gateway を起動する
 4. ACP bridge を立ち上げる
 5. ACP runtime backend に prompt を送る
@@ -169,8 +155,7 @@ JSON も標準出力したい場合:
 
 - Threads 検索はブラウザ表示やログイン状態に依存します。
 - 投稿本文の抽出は Threads 側の DOM 変更で影響を受ける可能性があります。
-- `generate_threads_content.py` は OpenClaw / ACP / Ollama の状態に依存します。
-- ローカルモデルは初回応答が遅いことがあります。
+- `generate_threads_content.py` は OpenClaw / ACP と、その先で設定された LLM provider の状態に依存します。
 - `outputs/` や Playwright の profile ディレクトリは通常コミットしません。
 
 ## Files
