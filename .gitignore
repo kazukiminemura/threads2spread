@@ -2,5 +2,6 @@
 __pycache__/
 venv/
 .playwright-threads-profile/
+.playwright-google-sheets-profile/
 .playwright-installed
 outputs/
