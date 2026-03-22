@@ -28,18 +28,18 @@ Threads の検索結果を集めて JSON に保存し、その JSON をもとに
 
 ## 現在の運用構成
 
-現在の運用イメージは、`OpenClaw Docker コンテナ` の中にこのリポジトリと実行用 Python 環境があり、そのコンテナ内で Threads 検索、投稿案生成、CSV 化、Google スプレッドシート追記までを完結させる形です。ホストはコンテナの起動や `docker exec openclaw ...` による入口としてだけ使い、実行環境とは分離します。
+現在の運用イメージは、`OpenClaw Docker コンテナ` の中にこのリポジトリと実行用 Python 環境があり、そのコンテナ内で Threads 検索、投稿案生成、CSV 化、Google スプレッドシート追記までを完結させる形です。ホストはスケジューラやコンテナ実行の入口だけを担当し、アプリケーション実行環境とは分離します。
 
 ```mermaid
 flowchart LR
-    subgraph Host["Host Machine"]
-        H["cron / docker exec"]
+    subgraph Host["Host Layer"]
+        H["Scheduler / Container Trigger"]
     end
 
-    subgraph C["OpenClaw Docker Container"]
-        A["threads2spread<br/>Python scripts"]
+    subgraph C["OpenClaw Container"]
+        A["threads2spread<br/>Workflow Scripts"]
         B["Playwright / Chromium"]
-        D["workspace / outputs<br/>search_results / generated_posts / post_csv"]
+        D["Persistent Outputs<br/>search_results / generated_posts / post_csv"]
         O["OpenClaw CLI / Gateway / ACP"]
     end
 
@@ -47,7 +47,7 @@ flowchart LR
     F["LLM API<br/>OpenAI / Ollama / other provider"]
     G["Google Sheets"]
 
-    H -->|"docker exec openclaw"| A
+    H -->|"定期実行"| A
     A -->|"検索実行"| B
     B -->|"Threads を検索 / 本文取得"| E
     E -->|"検索結果"| B
@@ -65,7 +65,7 @@ flowchart LR
 
 ### この図の見方
 
-- ホスト側は `docker exec openclaw ...` でコンテナ内ワークフローを起動します。
+- ホスト側はスケジューラからコンテナ内ワークフローを起動するだけで、アプリ本体はコンテナ内で完結します。
 - `search_threads_top_keyword.py` は OpenClaw コンテナ内で動き、Playwright 経由で Threads の検索結果を集めて JSON に保存します。
 - `generate_threads_content.py` は同じコンテナ内の OpenClaw CLI / Gateway / ACP を使って外部 LLM API と連携し、投稿案を生成します。
 - `export_threads_csv.py` が投稿案 JSON を予約投稿用 CSV に変換します。
@@ -82,9 +82,9 @@ flowchart LR
 ### 完全自動化
 
 ```bash
-# host system
-crontab -e
-0 9,21 * * * docker exec openclaw openclaw run /root/.openclaw/workspace/threads2spread/venv/bin/python /root/.openclaw/workspace/threads2spread/run_workflow.py >> /var/log/openclaw.log 2>&1
+# ホスト側の cron から、OpenClaw コンテナ内の Python で
+# threads2spread の run_workflow.py を起動する構成を想定しています。
+# セキュリティ上の理由から、実際のコンテナ名・内部パス・ログ出力先は README には記載していません。
 ```
 
 ### 最短の使い方
@@ -92,10 +92,14 @@ crontab -e
 たとえば `金運` というキーワードで一連の流れを実行する場合は次のとおりです。
 
 ```bash
-docker exec openclaw openclaw run /root/.openclaw/workspace/threads2spread/venv/bin/python /root/.openclaw/workspace/threads2spread/search_threads_top_keyword.py "金運"
-docker exec openclaw openclaw run /root/.openclaw/workspace/threads2spread/venv/bin/python /root/.openclaw/workspace/threads2spread/generate_threads_content.py
-docker exec openclaw openclaw run /root/.openclaw/workspace/threads2spread/venv/bin/python /root/.openclaw/workspace/threads2spread/export_threads_csv.py --scheduled-date 2126/03/19 --scheduled-time 23:45
-docker exec openclaw openclaw run /root/.openclaw/workspace/threads2spread/venv/bin/python /root/.openclaw/workspace/threads2spread/append_csv_to_google_sheet.py
+CONTAINER_NAME="<openclaw-container>"
+APP_DIR="<threads2spread-dir-in-container>"
+PYTHON_BIN="$APP_DIR/venv/bin/python"
+
+docker exec "$CONTAINER_NAME" "$PYTHON_BIN" "$APP_DIR/search_threads_top_keyword.py" "金運"
+docker exec "$CONTAINER_NAME" "$PYTHON_BIN" "$APP_DIR/generate_threads_content.py"
+docker exec "$CONTAINER_NAME" "$PYTHON_BIN" "$APP_DIR/export_threads_csv.py" --scheduled-date 2126/03/19 --scheduled-time 23:45
+docker exec "$CONTAINER_NAME" "$PYTHON_BIN" "$APP_DIR/append_csv_to_google_sheet.py"
 ```
 
 各ステップの出力は次のステップの入力になります。
@@ -123,10 +127,10 @@ pip install -r requirements.txt
 
 ### 1. Python 環境
 
-`threads2spread` の Python 環境は OpenClaw コンテナ内に作成して使います。以下はコンテナ内での例です。
+`threads2spread` の Python 環境は OpenClaw コンテナ内に作成して使います。以下はコンテナ内での概念例です。
 
 ```bash
-cd /root/.openclaw/workspace/threads2spread
+cd <threads2spread-dir-in-container>
 python3 -m venv venv
 ./venv/bin/pip install -r requirements.txt
 ```
@@ -134,7 +138,7 @@ python3 -m venv venv
 ### 2. Playwright / Chromium
 
 ```bash
-cd /root/.openclaw/workspace/threads2spread
+cd <threads2spread-dir-in-container>
 ./venv/bin/python -m playwright install
 ./venv/bin/python -m playwright install-deps
 ```
@@ -159,19 +163,19 @@ PATH 上にない場合でも、次のユーザー領域パスは自動で探索
 キーワードを検索して、上位 10 件までの結果を JSON 保存します。
 
 ```bash
-docker exec openclaw openclaw run /root/.openclaw/workspace/threads2spread/venv/bin/python /root/.openclaw/workspace/threads2spread/search_threads_top_keyword.py "金運"
+docker exec "$CONTAINER_NAME" "$PYTHON_BIN" "$APP_DIR/search_threads_top_keyword.py" "金運"
 ```
 
 JSON も標準出力したい場合:
 
 ```bash
-docker exec openclaw openclaw run /root/.openclaw/workspace/threads2spread/venv/bin/python /root/.openclaw/workspace/threads2spread/search_threads_top_keyword.py "金運" --json
+docker exec "$CONTAINER_NAME" "$PYTHON_BIN" "$APP_DIR/search_threads_top_keyword.py" "金運" --json
 ```
 
 件数を変えたい場合:
 
 ```bash
-docker exec openclaw openclaw run /root/.openclaw/workspace/threads2spread/venv/bin/python /root/.openclaw/workspace/threads2spread/search_threads_top_keyword.py "金運" --limit 5
+docker exec "$CONTAINER_NAME" "$PYTHON_BIN" "$APP_DIR/search_threads_top_keyword.py" "金運" --limit 5
 ```
 
 出力先:
@@ -191,34 +195,34 @@ docker exec openclaw openclaw run /root/.openclaw/workspace/threads2spread/venv/
 最新の検索結果 JSON を読み込み、OpenClaw の ACP runtime backend 経由で投稿案を生成します。
 
 ```bash
-docker exec openclaw openclaw run /root/.openclaw/workspace/threads2spread/venv/bin/python /root/.openclaw/workspace/threads2spread/generate_threads_content.py
+docker exec "$CONTAINER_NAME" "$PYTHON_BIN" "$APP_DIR/generate_threads_content.py"
 ```
 
 投稿数を変える場合:
 
 ```bash
-docker exec openclaw openclaw run /root/.openclaw/workspace/threads2spread/venv/bin/python /root/.openclaw/workspace/threads2spread/generate_threads_content.py --count 5
+docker exec "$CONTAINER_NAME" "$PYTHON_BIN" "$APP_DIR/generate_threads_content.py" --count 5
 ```
 
 長さプリセットを変える場合:
 
 ```bash
-docker exec openclaw openclaw run /root/.openclaw/workspace/threads2spread/venv/bin/python /root/.openclaw/workspace/threads2spread/generate_threads_content.py --content-length short
-docker exec openclaw openclaw run /root/.openclaw/workspace/threads2spread/venv/bin/python /root/.openclaw/workspace/threads2spread/generate_threads_content.py --content-length medium
-docker exec openclaw openclaw run /root/.openclaw/workspace/threads2spread/venv/bin/python /root/.openclaw/workspace/threads2spread/generate_threads_content.py --content-length long
+docker exec "$CONTAINER_NAME" "$PYTHON_BIN" "$APP_DIR/generate_threads_content.py" --content-length short
+docker exec "$CONTAINER_NAME" "$PYTHON_BIN" "$APP_DIR/generate_threads_content.py" --content-length medium
+docker exec "$CONTAINER_NAME" "$PYTHON_BIN" "$APP_DIR/generate_threads_content.py" --content-length long
 ```
 
 最大文字数で制御する場合:
 
 ```bash
-docker exec openclaw openclaw run /root/.openclaw/workspace/threads2spread/venv/bin/python /root/.openclaw/workspace/threads2spread/generate_threads_content.py --max-chars 120
+docker exec "$CONTAINER_NAME" "$PYTHON_BIN" "$APP_DIR/generate_threads_content.py" --max-chars 120
 ```
 
 特定の検索結果 JSON を使う場合:
 
 ```bash
-docker exec openclaw openclaw run /root/.openclaw/workspace/threads2spread/venv/bin/python /root/.openclaw/workspace/threads2spread/generate_threads_content.py \
-  --results-file /root/.openclaw/workspace/threads2spread/outputs/search_results/20260320_114150_金運.json
+docker exec "$CONTAINER_NAME" "$PYTHON_BIN" "$APP_DIR/generate_threads_content.py" \
+  --results-file "$APP_DIR/outputs/search_results/<timestamp>_<keyword>.json"
 ```
 
 出力先:
@@ -252,20 +256,20 @@ docker exec openclaw openclaw run /root/.openclaw/workspace/threads2spread/venv/
 基本実行:
 
 ```bash
-docker exec openclaw openclaw run /root/.openclaw/workspace/threads2spread/venv/bin/python /root/.openclaw/workspace/threads2spread/export_threads_csv.py
+docker exec "$CONTAINER_NAME" "$PYTHON_BIN" "$APP_DIR/export_threads_csv.py"
 ```
 
 特定の JSON を指定する場合:
 
 ```bash
-docker exec openclaw openclaw run /root/.openclaw/workspace/threads2spread/venv/bin/python /root/.openclaw/workspace/threads2spread/export_threads_csv.py \
-  --input-file /root/.openclaw/workspace/threads2spread/outputs/generated_posts/20260320_180000_intel_threads_posts.json
+docker exec "$CONTAINER_NAME" "$PYTHON_BIN" "$APP_DIR/export_threads_csv.py" \
+  --input-file "$APP_DIR/outputs/generated_posts/<timestamp>_<keyword>_threads_posts.json"
 ```
 
 予定日付と予定時刻を一括指定する場合:
 
 ```bash
-docker exec openclaw openclaw run /root/.openclaw/workspace/threads2spread/venv/bin/python /root/.openclaw/workspace/threads2spread/export_threads_csv.py \
+docker exec "$CONTAINER_NAME" "$PYTHON_BIN" "$APP_DIR/export_threads_csv.py" \
   --scheduled-date 2126/03/19 \
   --scheduled-time 23:45
 ```
@@ -284,7 +288,7 @@ docker exec openclaw openclaw run /root/.openclaw/workspace/threads2spread/venv/
 基本実行:
 
 ```bash
-docker exec openclaw openclaw run /root/.openclaw/workspace/threads2spread/venv/bin/python /root/.openclaw/workspace/threads2spread/append_csv_to_google_sheet.py
+docker exec "$CONTAINER_NAME" "$PYTHON_BIN" "$APP_DIR/append_csv_to_google_sheet.py"
 ```
 
 デフォルトでは Playwright で Google Sheets を直接開いて追記します。  
@@ -293,14 +297,14 @@ docker exec openclaw openclaw run /root/.openclaw/workspace/threads2spread/venv/
 特定の CSV を指定する場合:
 
 ```bash
-docker exec openclaw openclaw run /root/.openclaw/workspace/threads2spread/venv/bin/python /root/.openclaw/workspace/threads2spread/append_csv_to_google_sheet.py \
-  --csv-file /root/.openclaw/workspace/threads2spread/outputs/post_csv/20260329_081024_nvidia_threads_posts.csv
+docker exec "$CONTAINER_NAME" "$PYTHON_BIN" "$APP_DIR/append_csv_to_google_sheet.py" \
+  --csv-file "$APP_DIR/outputs/post_csv/<input_filename>.csv"
 ```
 
 service account を使って Google Sheets API 経由で追記したい場合:
 
 ```bash
-docker exec openclaw openclaw run /root/.openclaw/workspace/threads2spread/venv/bin/python /root/.openclaw/workspace/threads2spread/append_csv_to_google_sheet.py \
+docker exec "$CONTAINER_NAME" "$PYTHON_BIN" "$APP_DIR/append_csv_to_google_sheet.py" \
   --mode api \
   --service-account-file /absolute/path/to/service-account.json
 ```
@@ -323,7 +327,7 @@ Google Cloud の設定手順:
 ヘッダー行も含めて追記する場合:
 
 ```bash
-docker exec openclaw openclaw run /root/.openclaw/workspace/threads2spread/venv/bin/python /root/.openclaw/workspace/threads2spread/append_csv_to_google_sheet.py --include-header
+docker exec "$CONTAINER_NAME" "$PYTHON_BIN" "$APP_DIR/append_csv_to_google_sheet.py" --include-header
 ```
 
 `.env` の例:
@@ -339,7 +343,7 @@ THREADS_HEADLESS=true
 CLI で URL を渡す場合:
 
 ```bash
-docker exec openclaw openclaw run /root/.openclaw/workspace/threads2spread/venv/bin/python /root/.openclaw/workspace/threads2spread/append_csv_to_google_sheet.py \
+docker exec "$CONTAINER_NAME" "$PYTHON_BIN" "$APP_DIR/append_csv_to_google_sheet.py" \
   --spreadsheet-url "https://docs.google.com/spreadsheets/d/your-spreadsheet-id/edit?gid=your-gid#gid=your-gid"
 ```
 
