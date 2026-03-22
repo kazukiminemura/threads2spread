@@ -26,13 +26,60 @@ Threads の検索結果を集めて JSON に保存し、その JSON をもとに
 4. `append_csv_to_google_sheet.py`
    作成した CSV を Google スプレッドシートに追記し、予約投稿用の管理表として使える状態にします。
 
+## 現在の運用構成
+
+現在の運用イメージは、`Ubuntu ホスト` 上でこのリポジトリの Python スクリプトを動かし、その中で `OpenClaw` を経由して外部 LLM API と連携しながら、Threads 投稿案の生成とスプレッドシート管理までをつなぐ形です。
+
+```mermaid
+flowchart LR
+    subgraph Host["Ubuntu Host"]
+        A["threads2spread<br/>Python scripts"]
+        B["Playwright / Chromium"]
+        C["OpenClaw<br/>Docker Container"]
+        D["outputs/<br/>search_results / generated_posts / post_csv"]
+    end
+
+    E["Threads"]
+    F["LLM API<br/>OpenAI / Ollama / other provider"]
+    G["Google Sheets"]
+
+    A -->|"検索実行"| B
+    B -->|"Threads を検索 / 本文取得"| E
+    E -->|"検索結果"| B
+    B -->|"JSON保存"| D
+
+    A -->|"検索結果JSONを渡す"| C
+    C -->|"API連携"| F
+    F -->|"生成結果"| C
+    C -->|"投稿案JSONを返す"| A
+    A -->|"生成結果を保存"| D
+
+    A -->|"CSVを作成"| D
+    A -->|"API またはブラウザ操作で追記"| G
+```
+
+### この図の見方
+
+- `search_threads_top_keyword.py` が Ubuntu ホスト上で動き、Playwright 経由で Threads の検索結果を集めて JSON に保存します。
+- `generate_threads_content.py` が保存済み JSON を OpenClaw に渡し、Docker 上の OpenClaw が外部 LLM API と連携して投稿案を生成します。
+- `export_threads_csv.py` が投稿案 JSON を予約投稿用 CSV に変換します。
+- `append_csv_to_google_sheet.py` が CSV を Google スプレッドシートへ追記し、運用管理に使える状態にします。
+
+### データの流れ
+
+1. Threads から話題を収集する
+2. 検索結果を JSON に保存する
+3. OpenClaw Docker 経由で LLM API に投稿案生成を依頼する
+4. 生成結果を JSON / CSV として保存する
+5. Google スプレッドシートへ追記して運用に載せる
+
 ### 完全自動化
+
 ```bash
 # host system
 crontab -e
 0 9,21 * * * docker exec openclaw openclaw run /root/.openclaw/workspace/threads2spread/venv/bin/python /root/.openclaw/workspace/threads2spread/run_workflow.py >> /var/log/openclaw.log 2>&1
 ```
-
 
 ### 最短の使い方
 
@@ -272,8 +319,11 @@ Google Cloud の設定手順:
 `.env` の例:
 
 ```bash
+# Copy this file to .env and fill in the values
 GOOGLE_SHEETS_URL=https://docs.google.com/spreadsheets/d/your-spreadsheet-id/edit?gid=your-gid#gid=your-gid
 GOOGLE_SERVICE_ACCOUNT_FILE=/absolute/path/to/service-account.json
+# Optional: force browser mode off/on for Threads search
+THREADS_HEADLESS=true
 ```
 
 CLI で URL を渡す場合:
