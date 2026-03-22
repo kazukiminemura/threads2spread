@@ -80,14 +80,10 @@ class RuntimeState:
 
 
 @dataclass
-class KeywordRunSummary:
+class SearchRunSummary:
     keyword: str
     started_at: str
     search_json: str | None = None
-    generated_json: str | None = None
-    csv_file: str | None = None
-    sheet_append: dict[str, Any] | None = None
-    posts_signature: str | None = None
     status: str = "running"
     finished_at: str | None = None
     recovered_after_retry: int | None = None
@@ -97,6 +93,33 @@ class KeywordRunSummary:
             "keyword": self.keyword,
             "started_at": self.started_at,
             "search_json": self.search_json,
+            "status": self.status,
+            "finished_at": self.finished_at,
+        }
+        if self.recovered_after_retry is not None:
+            payload["recovered_after_retry"] = self.recovered_after_retry
+        return payload
+
+
+@dataclass
+class WorkflowRunSummary:
+    keywords: list[str]
+    started_at: str
+    search_results: list[dict[str, Any]]
+    aggregated_search_json: str | None = None
+    generated_json: str | None = None
+    csv_file: str | None = None
+    sheet_append: dict[str, Any] | None = None
+    posts_signature: str | None = None
+    status: str = "running"
+    finished_at: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "keywords": self.keywords,
+            "started_at": self.started_at,
+            "search_results": self.search_results,
+            "aggregated_search_json": self.aggregated_search_json,
             "generated_json": self.generated_json,
             "csv_file": self.csv_file,
             "sheet_append": self.sheet_append,
@@ -104,9 +127,6 @@ class KeywordRunSummary:
             "status": self.status,
             "finished_at": self.finished_at,
         }
-        if self.recovered_after_retry is not None:
-            payload["recovered_after_retry"] = self.recovered_after_retry
-        return payload
 
 
 @dataclass(frozen=True)
@@ -319,6 +339,41 @@ class WorkflowFiles:
     def relative_to_base(self, path: Path) -> str:
         return str(path.relative_to(self.base_dir))
 
+    def build_aggregated_search_results(
+        self,
+        keywords: list[str],
+        search_files: list[Path],
+    ) -> Path:
+        output_dir = self.base_dir / "outputs" / "search_results"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_path = output_dir / f"{timestamp}_combined_search_results.json"
+
+        aggregated_results: list[dict[str, Any]] = []
+        for search_file in search_files:
+            payload = json.loads(search_file.read_text(encoding="utf-8"))
+            keyword = str(payload.get("keyword") or "")
+            for result in payload.get("results", []):
+                if isinstance(result, dict):
+                    aggregated_results.append(
+                        {
+                            **result,
+                            "keyword": keyword,
+                            "source_search_file": self.relative_to_base(search_file),
+                        }
+                    )
+
+        output = {
+            "keyword": ", ".join(keywords),
+            "keywords": keywords,
+            "keyword_count": len(keywords),
+            "source_files": [self.relative_to_base(path) for path in search_files],
+            "results_count": len(aggregated_results),
+            "results": aggregated_results,
+        }
+        output_path.write_text(json.dumps(output, ensure_ascii=False, indent=2), encoding="utf-8")
+        return output_path
+
 
 class WorkflowRunner:
     def __init__(
@@ -345,29 +400,54 @@ class WorkflowRunner:
         if not keywords:
             raise RuntimeError("No keywords configured. Set keywords in config.yaml or pass --keyword.")
 
-        summaries: list[dict[str, Any]] = []
+        search_summaries: list[dict[str, Any]] = []
         failures: list[dict[str, Any]] = []
+        search_files: list[Path] = []
 
         for keyword in keywords:
-            summary, failure = self._run_keyword_with_retry(str(keyword))
-            summaries.append(summary)
+            summary, failure, search_file = self._run_search_with_retry(str(keyword))
+            search_summaries.append(summary)
             if failure is not None:
                 failures.append(failure)
+                continue
+            if search_file is not None:
+                search_files.append(search_file)
 
-        return summaries, failures
+        if not search_files:
+            return search_summaries, failures
 
-    def _run_keyword_with_retry(self, keyword: str) -> tuple[dict[str, Any], dict[str, Any] | None]:
+        try:
+            workflow_summary = self._run_workflow_after_search(keywords, search_summaries, search_files)
+            workflow_payload = workflow_summary.to_dict()
+            self._store_workflow_run(workflow_payload)
+            return [workflow_payload], failures
+        except Exception as exc:
+            LOGGER.exception("workflow keywords=%s failed", keywords)
+            failure = {
+                "keywords": keywords,
+                "status": "error",
+                "error": str(exc),
+                "failed_at": datetime.now().isoformat(timespec="seconds"),
+            }
+            self._store_workflow_run(failure)
+            failures.append(failure)
+            return search_summaries, failures
+
+    def _run_search_with_retry(
+        self,
+        keyword: str,
+    ) -> tuple[dict[str, Any], dict[str, Any] | None, Path | None]:
         last_error: Exception | None = None
 
         for attempt in range(self.config.retry_count + 1):
             try:
                 LOGGER.info("keyword=%s attempt=%s/%s", keyword, attempt + 1, self.config.retry_count + 1)
-                summary = self._process_keyword(keyword)
+                summary, search_file = self._process_search(keyword)
                 if attempt:
                     summary.recovered_after_retry = attempt
                 payload = summary.to_dict()
-                self._store_last_run(keyword, payload)
-                return payload, None
+                self._store_last_search_run(keyword, payload)
+                return payload, None, search_file
             except Exception as exc:
                 last_error = exc
                 LOGGER.exception("keyword=%s attempt=%s failed", keyword, attempt + 1)
@@ -380,11 +460,11 @@ class WorkflowRunner:
             "failed_at": datetime.now().isoformat(timespec="seconds"),
             "retry_count": self.config.retry_count,
         }
-        self._store_last_run(keyword, failure)
-        return failure, failure
+        self._store_last_search_run(keyword, failure)
+        return failure, failure, None
 
-    def _process_keyword(self, keyword: str) -> KeywordRunSummary:
-        summary = KeywordRunSummary(
+    def _process_search(self, keyword: str) -> tuple[SearchRunSummary, Path]:
+        summary = SearchRunSummary(
             keyword=keyword,
             started_at=datetime.now().isoformat(timespec="seconds"),
         )
@@ -392,21 +472,43 @@ class WorkflowRunner:
 
         search_file = self._run_search_step(keyword)
         summary.search_json = self.files.relative_to_base(search_file)
-        LOGGER.info("keyword=%s search_json=%s", keyword, summary.search_json)
-
-        generated_file = self._run_generate_step(keyword, search_file)
-        summary.generated_json = self.files.relative_to_base(generated_file)
-        summary.posts_signature = self.files.build_posts_signature(generated_file)
-        LOGGER.info("keyword=%s generated_json=%s", keyword, summary.generated_json)
-
-        csv_file = self._run_export_step(keyword, generated_file)
-        summary.csv_file = self.files.relative_to_base(csv_file)
-        LOGGER.info("keyword=%s csv_file=%s", keyword, summary.csv_file)
-
-        summary.sheet_append = self._maybe_append_to_sheet(keyword, csv_file, summary.posts_signature)
         summary.status = "ok"
         summary.finished_at = datetime.now().isoformat(timespec="seconds")
-        LOGGER.info("keyword=%s status=done", keyword)
+        LOGGER.info("keyword=%s search_json=%s", keyword, summary.search_json)
+        LOGGER.info("keyword=%s search_status=done", keyword)
+        return summary, search_file
+
+    def _run_workflow_after_search(
+        self,
+        keywords: list[str],
+        search_summaries: list[dict[str, Any]],
+        search_files: list[Path],
+    ) -> WorkflowRunSummary:
+        workflow_key = ",".join(keywords)
+        summary = WorkflowRunSummary(
+            keywords=keywords,
+            started_at=datetime.now().isoformat(timespec="seconds"),
+            search_results=search_summaries,
+        )
+        LOGGER.info("workflow keywords=%s aggregated_search=status_start", keywords)
+
+        aggregated_search_file = self.files.build_aggregated_search_results(keywords, search_files)
+        summary.aggregated_search_json = self.files.relative_to_base(aggregated_search_file)
+        LOGGER.info("workflow aggregated_search_json=%s", summary.aggregated_search_json)
+
+        generated_file = self._run_generate_step(workflow_key, aggregated_search_file)
+        summary.generated_json = self.files.relative_to_base(generated_file)
+        summary.posts_signature = self.files.build_posts_signature(generated_file)
+        LOGGER.info("workflow generated_json=%s", summary.generated_json)
+
+        csv_file = self._run_export_step(workflow_key, generated_file)
+        summary.csv_file = self.files.relative_to_base(csv_file)
+        LOGGER.info("workflow csv_file=%s", summary.csv_file)
+
+        summary.sheet_append = self._maybe_append_to_sheet(workflow_key, csv_file, summary.posts_signature)
+        summary.status = "ok"
+        summary.finished_at = datetime.now().isoformat(timespec="seconds")
+        LOGGER.info("workflow keywords=%s status=done", keywords)
         return summary
 
     def _run_search_step(self, keyword: str) -> Path:
@@ -415,6 +517,8 @@ class WorkflowRunner:
         return self.files.find_latest(self.base_dir / "outputs/search_results", "*.json")
 
     def _run_generate_step(self, keyword: str, search_file: Path) -> Path:
+        output_dir = self.base_dir / "outputs/generated_posts"
+        before = {path.resolve() for path in output_dir.glob("*.json")} if output_dir.exists() else set()
         command = [
             self.python_executable,
             DEFAULT_SCRIPTS["generate"],
@@ -430,10 +534,11 @@ class WorkflowRunner:
         if self.config.generate.max_chars is not None:
             command.extend(["--max-chars", str(self.config.generate.max_chars)])
         self.command_runner.run(command, f"{keyword}.generate")
-        return self.files.find_latest(
-            self.base_dir / "outputs/generated_posts",
-            f"*_{keyword}_threads_posts.json",
-        )
+        after = {path.resolve() for path in output_dir.glob("*.json")}
+        new_files = [Path(path) for path in after - before]
+        if new_files:
+            return max(new_files, key=lambda path: path.stat().st_mtime)
+        return self.files.find_latest(output_dir, "*.json")
 
     def _run_export_step(self, keyword: str, generated_file: Path) -> Path:
         command = [
@@ -512,8 +617,11 @@ class WorkflowRunner:
             command.extend(["--service-account-file", service_account_file])
         return command
 
-    def _store_last_run(self, keyword: str, payload: dict[str, Any]) -> None:
+    def _store_last_search_run(self, keyword: str, payload: dict[str, Any]) -> None:
         self.state.setdefault("runs", {}).setdefault(keyword, {})["last_run"] = payload
+
+    def _store_workflow_run(self, payload: dict[str, Any]) -> None:
+        self.state.setdefault("workflow", {})["last_run"] = payload
 
     def _resolve_python_executable(self) -> str:
         candidates = [
