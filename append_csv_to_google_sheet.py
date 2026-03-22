@@ -1,5 +1,6 @@
 import argparse
 import csv
+import logging
 import os
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -21,6 +22,16 @@ except ImportError:
 CSV_OUTPUT_DIR = Path("outputs/post_csv")
 GOOGLE_SHEETS_PROFILE_DIR = Path(".playwright-google-sheets-profile")
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
+LOGGER = logging.getLogger("threads2spread.append")
+
+
+def setup_logging(level_name):
+    level = getattr(logging, str(level_name).upper(), logging.INFO)
+    logging.basicConfig(
+        level=level,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
 
 
 def launch_google_sheets_context(playwright):
@@ -179,9 +190,11 @@ def filter_duplicate_rows(rows, existing_signatures):
 
 def append_rows_via_api(spreadsheet_url, rows, service_account_file):
     spreadsheet_id, gid = parse_spreadsheet_url(spreadsheet_url)
+    LOGGER.info("append mode=api spreadsheet_id=%s gid=%s input_rows=%s", spreadsheet_id, gid, len(rows))
     service = build_sheets_service(service_account_file)
     sheet_title = resolve_sheet_title(service, spreadsheet_id, gid)
     rows = filter_duplicate_rows(rows, get_existing_row_signatures(service, spreadsheet_id, sheet_title))
+    LOGGER.info("append mode=api sheet_title=%s filtered_rows=%s", sheet_title, len(rows))
 
     if not rows:
         return spreadsheet_id, gid, sheet_title, 0
@@ -237,6 +250,7 @@ def append_rows_via_browser(spreadsheet_url, rows, timeout_ms):
 
     ensure_playwright_runtime()
     spreadsheet_id, gid = parse_spreadsheet_url(spreadsheet_url)
+    LOGGER.info("append mode=browser spreadsheet_id=%s gid=%s input_rows=%s", spreadsheet_id, gid, len(rows))
     tsv_text = rows_to_tsv(rows)
 
     with sync_playwright() as playwright:
@@ -317,12 +331,26 @@ def main():
         default=120,
         help="ブラウザ操作のタイムアウト秒数",
     )
+    parser.add_argument(
+        "--log-level",
+        default="INFO",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
+        help="Console log level",
+    )
     args = parser.parse_args()
 
+    setup_logging(args.log_level)
     csv_file = args.csv_file or find_latest_csv_file()
     spreadsheet_url = resolve_spreadsheet_url(args.spreadsheet_url)
     rows = load_csv_rows(csv_file, include_header=args.include_header)
     mode = resolve_mode(args.mode, args.service_account_file)
+    LOGGER.info(
+        "start csv_file=%s rows=%s include_header=%s mode=%s",
+        csv_file,
+        len(rows),
+        args.include_header,
+        mode,
+    )
 
     if mode == "api":
         service_account_file = get_service_account_file(args.service_account_file)
