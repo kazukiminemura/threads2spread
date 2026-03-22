@@ -1,5 +1,6 @@
 import argparse
 from datetime import datetime
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -178,6 +179,31 @@ def find_latest_file(directory: Path, pattern: str) -> Path:
     return max(candidates, key=lambda path: path.stat().st_mtime)
 
 
+def build_posts_signature(generated_file: Path) -> str:
+    payload = json.loads(generated_file.read_text(encoding="utf-8"))
+    normalized_posts = []
+    for post in payload.get("posts", []):
+        if not isinstance(post, dict):
+            normalized_posts.append(post)
+            continue
+
+        normalized_post = {}
+        for key in sorted(post.keys()):
+            if key in {"scheduled_date", "scheduled_time", "status"}:
+                continue
+            normalized_post[key] = post[key]
+        normalized_posts.append(normalized_post)
+
+    signature_source = {
+        "keyword": payload.get("keyword"),
+        "posts": normalized_posts,
+    }
+    digest = hashlib.sha256(
+        json.dumps(signature_source, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    ).hexdigest()
+    return digest
+
+
 def append_to_sheet_enabled(sheets_config: dict[str, Any], cli_skip: bool) -> bool:
     if cli_skip:
         return False
@@ -222,6 +248,8 @@ def process_keyword(keyword: str, config: dict[str, Any], args: argparse.Namespa
     run_command(generate_cmd, BASE_DIR)
     generated_file = find_latest_file(BASE_DIR / "outputs/generated_posts", f"*_{keyword}_threads_posts.json")
     run_summary["generated_json"] = str(generated_file.relative_to(BASE_DIR))
+    posts_signature = build_posts_signature(generated_file)
+    run_summary["posts_signature"] = posts_signature
 
     export_cmd = [
         venv_python,
@@ -239,8 +267,13 @@ def process_keyword(keyword: str, config: dict[str, Any], args: argparse.Namespa
 
     if append_to_sheet_enabled(sheets_cfg, args.skip_sheets):
         csv_key = str(csv_file.resolve())
-        if sheets_cfg.get("dedupe", True) and state.get("runs", {}).get(keyword, {}).get("last_appended_csv") == csv_key:
-            run_summary["sheet_append"] = {"status": "skipped_duplicate", "csv_file": csv_key}
+        keyword_state = state.setdefault("runs", {}).setdefault(keyword, {})
+        if sheets_cfg.get("dedupe", True) and keyword_state.get("last_appended_posts_signature") == posts_signature:
+            run_summary["sheet_append"] = {
+                "status": "skipped_duplicate",
+                "reason": "same_posts_signature",
+                "csv_file": csv_key,
+            }
         else:
             append_cmd = [
                 venv_python,
@@ -258,7 +291,8 @@ def process_keyword(keyword: str, config: dict[str, Any], args: argparse.Namespa
                 append_cmd.extend(["--service-account-file", str(service_account_file)])
             append_stdout = run_command(append_cmd, BASE_DIR)
             run_summary["sheet_append"] = {"status": "ok", "output": append_stdout}
-            state.setdefault("runs", {}).setdefault(keyword, {})["last_appended_csv"] = csv_key
+            keyword_state["last_appended_csv"] = csv_key
+            keyword_state["last_appended_posts_signature"] = posts_signature
 
     run_summary["status"] = "ok"
     run_summary["finished_at"] = datetime.now().isoformat(timespec="seconds")

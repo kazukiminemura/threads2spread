@@ -144,10 +144,44 @@ def resolve_sheet_title(service, spreadsheet_id, gid):
     raise RuntimeError(f"gid={gid} に対応するシートが見つかりませんでした。")
 
 
+def build_row_signature(row):
+    normalized = list(row)
+    if len(normalized) < 19:
+        normalized.extend([""] * (19 - len(normalized)))
+    return tuple(normalized[1:2] + normalized[5:19])
+
+
+def get_existing_row_signatures(service, spreadsheet_id, sheet_title):
+    response = (
+        service.spreadsheets()
+        .values()
+        .get(spreadsheetId=spreadsheet_id, range=f"'{sheet_title}'!A:S")
+        .execute()
+    )
+    signatures = set()
+    for row in response.get("values", []):
+        if any(str(cell).strip() for cell in row):
+            signatures.add(build_row_signature(row))
+    return signatures
+
+
+def filter_duplicate_rows(rows, existing_signatures):
+    filtered_rows = []
+    seen_signatures = set(existing_signatures)
+    for row in rows:
+        signature = build_row_signature(row)
+        if signature in seen_signatures:
+            continue
+        filtered_rows.append(row)
+        seen_signatures.add(signature)
+    return filtered_rows
+
+
 def append_rows_via_api(spreadsheet_url, rows, service_account_file):
     spreadsheet_id, gid = parse_spreadsheet_url(spreadsheet_url)
     service = build_sheets_service(service_account_file)
     sheet_title = resolve_sheet_title(service, spreadsheet_id, gid)
+    rows = filter_duplicate_rows(rows, get_existing_row_signatures(service, spreadsheet_id, sheet_title))
 
     if not rows:
         return spreadsheet_id, gid, sheet_title, 0
