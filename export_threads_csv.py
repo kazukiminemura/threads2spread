@@ -29,9 +29,9 @@ CSV_HEADERS = [
     "画像URL_9枚目",
     "画像URL_10枚目",
 ]
-DEFAULT_SLOT_MINUTES = [15, 45]
-DEFAULT_SLOT_HOURS = [9, 12, 15, 19]
 DEFAULT_START_DELAY_MINUTES = 20
+DEFAULT_SLOT_GRANULARITY_MINUTES = 15
+MAX_SCHEDULE_WINDOW_HOURS = 12
 
 
 def find_latest_generated_posts_file():
@@ -86,25 +86,46 @@ def parse_schedule_start(scheduled_date, scheduled_time):
 
 def round_up_to_next_slot(base_datetime):
     candidate = base_datetime.replace(second=0, microsecond=0)
-    for day_offset in range(14):
-        current_day = candidate.date() + timedelta(days=day_offset)
-        for hour in DEFAULT_SLOT_HOURS:
-            for minute in DEFAULT_SLOT_MINUTES:
-                slot = datetime.combine(current_day, datetime.min.time()).replace(hour=hour, minute=minute)
-                if slot >= candidate:
-                    return slot
-    raise RuntimeError("予約枠を計算できませんでした。")
+    remainder = candidate.minute % DEFAULT_SLOT_GRANULARITY_MINUTES
+    if remainder == 0:
+        return candidate
+    return candidate + timedelta(minutes=DEFAULT_SLOT_GRANULARITY_MINUTES - remainder)
+
+
+def align_to_minute(value):
+    return value.replace(second=0, microsecond=0)
 
 
 def build_safe_schedule(posts_count, scheduled_date, scheduled_time):
+    if posts_count <= 0:
+        return []
+
     start_at = parse_schedule_start(scheduled_date, scheduled_time)
     first_slot = round_up_to_next_slot(start_at)
-    slots = []
-    current_slot = first_slot
+    deadline = align_to_minute(start_at + timedelta(hours=MAX_SCHEDULE_WINDOW_HOURS))
 
-    while len(slots) < posts_count:
-        slots.append(current_slot)
-        current_slot = round_up_to_next_slot(current_slot + timedelta(minutes=1))
+    if first_slot > deadline:
+        deadline = first_slot
+
+    if posts_count == 1:
+        return [first_slot]
+
+    slots = []
+    total_window_seconds = max(0.0, (deadline - first_slot).total_seconds())
+
+    for index in range(posts_count):
+        remaining_posts = posts_count - index - 1
+        earliest_slot = first_slot if not slots else slots[-1] + timedelta(minutes=1)
+        latest_slot = deadline - timedelta(minutes=remaining_posts)
+
+        if latest_slot < earliest_slot:
+            slot = earliest_slot
+        else:
+            offset_seconds = total_window_seconds * index / (posts_count - 1)
+            target_slot = align_to_minute(first_slot + timedelta(seconds=offset_seconds))
+            slot = min(max(target_slot, earliest_slot), latest_slot)
+
+        slots.append(slot)
 
     return slots
 
