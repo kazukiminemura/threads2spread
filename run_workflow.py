@@ -162,7 +162,7 @@ def run_command(command: list[str], cwd: Path) -> str:
         if "libnspr4.so" in stderr:
             raise RuntimeError(
                 "Playwright の実行に必要な共有ライブラリが不足しています (libnspr4.so)。\n"
-                "このホストで `sudo ./venv/bin/python -m playwright install-deps` を実行してから再試行してください。"
+                "OpenClaw Docker コンテナ内で `./venv/bin/python -m playwright install-deps` を実行してから再試行してください。"
             )
         raise RuntimeError(
             f"Command failed ({result.returncode}): {' '.join(command)}\n"

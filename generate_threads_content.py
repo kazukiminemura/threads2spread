@@ -86,7 +86,7 @@ def resolve_openclaw_bin():
 
     raise RuntimeError(
         "openclaw コマンドが見つかりませんでした。"
-        " この環境では ~/.npm-global/bin/openclaw への導入を想定しています。"
+        " OpenClaw Docker コンテナ内で実行され、コンテナ内 PATH または ~/.npm-global/bin/openclaw / ~/.local/bin/openclaw に導入されている前提です。"
     )
 
 
