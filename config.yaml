@@ -2,7 +2,8 @@ keywords:
   - 金運
 
 generate:
-  count: 5
+  count_min: 5
+  count_max: 7
   content_length: medium
   timeout_seconds: 600
   # max_chars: 120

@@ -6,6 +6,7 @@ import json
 import logging
 import os
 from pathlib import Path
+import random
 import subprocess
 import sys
 from typing import Any
@@ -32,7 +33,8 @@ LOGGER = logging.getLogger("threads2spread.workflow")
 
 @dataclass(frozen=True)
 class GenerateConfig:
-    count: int = 5
+    count_min: int = 5
+    count_max: int = 7
     content_length: str = "medium"
     timeout_seconds: int = 600
     max_chars: int | None = None
@@ -180,7 +182,8 @@ class ConfigLoader:
         return WorkflowConfig(
             keywords=keywords,
             generate=GenerateConfig(
-                count=int(generate_raw.get("count", 5) or 5),
+                count_min=int(generate_raw.get("count_min", generate_raw.get("count", 5)) or 5),
+                count_max=int(generate_raw.get("count_max", generate_raw.get("count", 7)) or 7),
                 content_length=str(generate_raw.get("content_length", "medium") or "medium"),
                 timeout_seconds=int(generate_raw.get("timeout_seconds", 600) or 600),
                 max_chars=(
@@ -519,13 +522,16 @@ class WorkflowRunner:
     def _run_generate_step(self, keyword: str, search_file: Path) -> Path:
         output_dir = self.base_dir / "outputs/generated_posts"
         before = {path.resolve() for path in output_dir.glob("*.json")} if output_dir.exists() else set()
+        count_min = min(self.config.generate.count_min, self.config.generate.count_max)
+        count_max = max(self.config.generate.count_min, self.config.generate.count_max)
+        selected_count = random.randint(count_min, count_max)
         command = [
             self.python_executable,
             DEFAULT_SCRIPTS["generate"],
             "--results-file",
             str(search_file),
             "--count",
-            str(self.config.generate.count),
+            str(selected_count),
             "--content-length",
             self.config.generate.content_length,
             "--timeout-seconds",

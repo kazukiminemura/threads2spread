@@ -29,9 +29,13 @@ CSV_HEADERS = [
     "画像URL_9枚目",
     "画像URL_10枚目",
 ]
-DEFAULT_START_DELAY_MINUTES = 20
 DEFAULT_SLOT_GRANULARITY_MINUTES = 15
-MAX_SCHEDULE_WINDOW_HOURS = 12
+DEFAULT_SCHEDULE_START_HOUR = 9
+
+
+SCHEDULE_FORMAT_ERROR = (
+    "--scheduled-date は YYYY/MM/DD、--scheduled-time は HH:MM 形式で指定してください。"
+)
 
 
 def find_latest_generated_posts_file():
@@ -66,20 +70,24 @@ def normalize_image_urls(post):
 
 def parse_schedule_start(scheduled_date, scheduled_time):
     now = datetime.now()
-    base_date = scheduled_date or now.strftime("%Y/%m/%d")
-    base_time = scheduled_time or now.strftime("%H:%M")
 
     try:
-        start_at = datetime.strptime(f"{base_date} {base_time}", "%Y/%m/%d %H:%M")
+        if scheduled_date:
+            base_date = datetime.strptime(scheduled_date, "%Y/%m/%d").date()
+        else:
+            base_date = now.date()
+            if now.hour >= DEFAULT_SCHEDULE_START_HOUR:
+                base_date = (now + timedelta(days=1)).date()
     except ValueError as exc:
-        raise RuntimeError(
-            "--scheduled-date は YYYY/MM/DD、--scheduled-time は HH:MM 形式で指定してください。"
-        ) from exc
+        raise RuntimeError(SCHEDULE_FORMAT_ERROR) from exc
 
-    if scheduled_date is None and scheduled_time is None:
-        start_at = now + timedelta(minutes=DEFAULT_START_DELAY_MINUTES)
-    else:
-        start_at = max(start_at, now)
+    start_at = datetime.combine(base_date, datetime.min.time()).replace(hour=DEFAULT_SCHEDULE_START_HOUR)
+    if scheduled_time:
+        try:
+            requested_time = datetime.strptime(scheduled_time, "%H:%M").time()
+        except ValueError as exc:
+            raise RuntimeError(SCHEDULE_FORMAT_ERROR) from exc
+        start_at = max(start_at, datetime.combine(base_date, requested_time))
 
     return start_at
 
@@ -92,37 +100,37 @@ def round_up_to_next_slot(base_datetime):
     return candidate + timedelta(minutes=DEFAULT_SLOT_GRANULARITY_MINUTES - remainder)
 
 
-def align_to_minute(value):
-    return value.replace(second=0, microsecond=0)
-
-
 def build_safe_schedule(posts_count, scheduled_date, scheduled_time):
     if posts_count <= 0:
         return []
 
     start_at = parse_schedule_start(scheduled_date, scheduled_time)
     first_slot = round_up_to_next_slot(start_at)
-    deadline = align_to_minute(start_at + timedelta(hours=MAX_SCHEDULE_WINDOW_HOURS))
+    deadline = datetime.combine(
+        first_slot.date() + timedelta(days=1),
+        datetime.min.time(),
+    ) - timedelta(minutes=DEFAULT_SLOT_GRANULARITY_MINUTES)
 
     if first_slot > deadline:
-        deadline = first_slot
+        first_slot = deadline
 
     if posts_count == 1:
         return [first_slot]
 
     slots = []
+    slot_granularity = timedelta(minutes=DEFAULT_SLOT_GRANULARITY_MINUTES)
     total_window_seconds = max(0.0, (deadline - first_slot).total_seconds())
 
     for index in range(posts_count):
         remaining_posts = posts_count - index - 1
-        earliest_slot = first_slot if not slots else slots[-1] + timedelta(minutes=1)
-        latest_slot = deadline - timedelta(minutes=remaining_posts)
+        earliest_slot = first_slot if not slots else slots[-1] + slot_granularity
+        latest_slot = deadline - (slot_granularity * remaining_posts)
 
         if latest_slot < earliest_slot:
             slot = earliest_slot
         else:
             offset_seconds = total_window_seconds * index / (posts_count - 1)
-            target_slot = align_to_minute(first_slot + timedelta(seconds=offset_seconds))
+            target_slot = round_up_to_next_slot(first_slot + timedelta(seconds=offset_seconds))
             slot = min(max(target_slot, earliest_slot), latest_slot)
 
         slots.append(slot)
@@ -188,7 +196,7 @@ def main():
     )
     parser.add_argument(
         "--scheduled-time",
-        help="全投稿の予定時刻を一括指定する (例: 23:45)",
+        help="全投稿の開始時刻を一括指定する (例: 23:45)",
     )
     parser.add_argument(
         "--status",
