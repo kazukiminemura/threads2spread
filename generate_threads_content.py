@@ -119,8 +119,50 @@ def extract_json_block(text):
     start = stripped.find("{")
     end = stripped.rfind("}")
     if start == -1 or end == -1 or end <= start:
-        raise RuntimeError("応答からJSONを見つけられませんでした。")
+        raise RuntimeError("????JSON?????????????")
     return stripped[start : end + 1]
+
+
+def iter_text_candidates(value):
+    if value is None:
+        return
+    if isinstance(value, str):
+        stripped = value.strip()
+        if stripped:
+            yield stripped
+        return
+    if isinstance(value, list):
+        for item in value:
+            yield from iter_text_candidates(item)
+        return
+    if isinstance(value, dict):
+        for key in ("text", "content", "message", "value"):
+            if key in value:
+                yield from iter_text_candidates(value[key])
+        for item in value.values():
+            yield from iter_text_candidates(item)
+
+
+def parse_response_payload(response_text, prompt_result):
+    candidates = []
+    seen = set()
+
+    for candidate in [response_text, *iter_text_candidates(prompt_result)]:
+        if not candidate or candidate in seen:
+            continue
+        seen.add(candidate)
+        candidates.append(candidate)
+
+    for candidate in candidates:
+        try:
+            payload = json.loads(extract_json_block(candidate))
+        except (json.JSONDecodeError, RuntimeError):
+            continue
+        if isinstance(payload, dict) and isinstance(payload.get("posts"), list):
+            return payload
+
+    preview = candidates[0][:500] if candidates else ""
+    raise RuntimeError(f"???? posts ???JSON????????????? preview={preview}")
 
 
 class ACPClient:
@@ -389,10 +431,10 @@ def generate_posts_via_acp_runtime(prompt_text, timeout_seconds):
         session_id = create_session(client, Path.cwd().resolve(), min(timeout_seconds, 30))
         response_text, prompt_result = prompt_session(client, session_id, prompt_text, timeout_seconds)
 
-        if not response_text:
-            raise RuntimeError(f"ACP runtime backend から空の応答が返されました: {prompt_result}")
+        if not response_text and not prompt_result:
+            raise RuntimeError("ACP runtime backend ????????????????????")
 
-        response_payload = json.loads(extract_json_block(response_text))
+        response_payload = parse_response_payload(response_text, prompt_result)
         raw_response = json.dumps(
             {
                 "response_text": response_text,
