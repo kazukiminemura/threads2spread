@@ -30,6 +30,15 @@ SEARCH_INPUT_SELECTORS = [
 ]
 
 
+def safe_goto(page, url, timeout=60000, post_wait_ms=0):
+    try:
+        page.goto(url, wait_until="domcontentloaded", timeout=timeout)
+    except PlaywrightTimeoutError:
+        page.goto(url, wait_until="load", timeout=timeout)
+    if post_wait_ms > 0:
+        page.wait_for_timeout(post_wait_ms)
+
+
 def should_run_headless():
     value = os.environ.get("THREADS_HEADLESS")
     if value is not None:
@@ -208,8 +217,7 @@ def enrich_results_with_post_content(context, results):
     enriched_results = []
 
     for result in results:
-        detail_page.goto(result["link"], wait_until="domcontentloaded", timeout=60000)
-        detail_page.wait_for_timeout(3000)
+        safe_goto(detail_page, result["link"], timeout=60000, post_wait_ms=3000)
         post_content = extract_post_text(detail_page)
         enriched_results.append(
             {
@@ -228,10 +236,8 @@ def search_threads_posts(keyword, limit):
         context.set_extra_http_headers(EXTRA_HEADERS)
         page = context.new_page()
 
-        page.goto(THREADS_HOME_URL, wait_until="networkidle", timeout=60000)
-        page.wait_for_timeout(5000)
-        page.goto(THREADS_SEARCH_URL, wait_until="networkidle", timeout=60000)
-        page.wait_for_timeout(3000)
+        safe_goto(page, THREADS_HOME_URL, timeout=60000, post_wait_ms=5000)
+        safe_goto(page, THREADS_SEARCH_URL, timeout=60000, post_wait_ms=3000)
 
         search_input, selector = find_search_input(page)
         submit_search_keyword(page, search_input, keyword)
