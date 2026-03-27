@@ -26,6 +26,15 @@ CONTENT_LENGTH_PRESETS = {
     "long": "1投稿あたり160〜240文字程度",
 }
 ACP_PROTOCOL_VERSION = 1
+ANTI_SPAM_POSTING_GUIDELINES = [
+    "宣伝文やテンプレ感の強い言い回しを避け、個人の気づきとして自然に書く",
+    "全投稿で書き出し・語尾・構成を変え、同じ型の量産投稿にしない",
+    "断定的な煽り、過度なポジティブ表現、誇張表現を避ける",
+    "『今すぐ』『絶対』『必見』のような強いCTAや誘導を入れない",
+    "絵文字・感嘆符・ハッシュタグは多用せず、使う場合も最小限にする",
+    "箇条書きや不自然な列挙より、会話に近い滑らかな一文～数文でまとめる",
+    "同じキーワードの不自然な反復を避け、言い換えや周辺語彙を使う",
+]
 
 
 def find_latest_search_results_file():
@@ -49,6 +58,7 @@ def build_length_instruction(content_length, max_chars):
 def build_prompt(payload, count, content_length, max_chars):
     length_instruction = build_length_instruction(content_length, max_chars)
     source_json = json.dumps(payload, ensure_ascii=False, indent=2)
+    anti_spam_rules = "\n".join(f"- {rule}" for rule in ANTI_SPAM_POSTING_GUIDELINES)
     return f"""以下の検索結果JSONをもとに、Threads投稿用の日本語コンテンツを{count}個作成してください。
 
 条件:
@@ -56,8 +66,11 @@ def build_prompt(payload, count, content_length, max_chars):
 - 元の検索結果の内容や雰囲気を参考にする
 - 誇張しすぎない
 - 各投稿は独立した完成文にする
+- 各投稿で視点や切り口を少しずつ変える
 - {length_instruction}
 - ハッシュタグは必要なときだけ最小限
+- スパム判定や量産投稿に見えにくくするため、次も守る:
+{anti_spam_rules}
 - 結果はJSONのみ返す
 - JSON形式は次の通り:
 {{
