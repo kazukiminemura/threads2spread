@@ -35,6 +35,43 @@ ANTI_SPAM_POSTING_GUIDELINES = [
     "箇条書きや不自然な列挙より、会話に近い滑らかな一文～数文でまとめる",
     "同じキーワードの不自然な反復を避け、言い換えや周辺語彙を使う",
 ]
+OPENING_STYLES = [
+    "自分の体験や直近の出来事から入り、いきなり一般論にしない",
+    "検索結果を見て感じた違和感や発見を、短いひと言から始める",
+    "身近な場面の描写から入り、あとで話題につなげる",
+    "よくある誤解や思い込みをやわらかくほどく形で始める",
+    "人に話しかけるより、独り言に近い温度で書き出す",
+]
+ANGLE_VARIATIONS = [
+    "初心者目線で、引っかかりやすい点を整理する",
+    "経験者目線で、小さなコツや見落としを共有する",
+    "失敗談や遠回りした経験を交えて実感ベースで書く",
+    "数字や効率より、気持ちの変化や続けやすさを軸にする",
+    "検索結果の共通点を拾いつつ、自分ならどう考えるかを添える",
+    "すぐ結論を言わず、途中の迷いや比較を見せる",
+]
+STRUCTURE_VARIATIONS = [
+    "2文から4文で、前半は具体、後半は気づきに寄せる",
+    "短文を混ぜてテンポを崩し、同じ文長を続けない",
+    "1つの主張に絞り、詰め込みすぎず余白を残す",
+    "問いかけを1回だけ使って流れを作る",
+    "結論先行ではなく、途中で納得感が出る順番にする",
+]
+CLOSING_STYLES = [
+    "断言で閉じず、少し余韻が残る締めにする",
+    "人に命令せず、自分はこうしているで終える",
+    "軽い気づきや観察で止め、強いCTAにしない",
+    "続きがありそうな終わり方にして、売り込み感を出さない",
+    "最後は控えめな感想や所感に留める",
+]
+AVOID_SHARED_PHRASES = [
+    "まずは",
+    "大事なのは",
+    "意外と",
+    "実は",
+    "ちなみに",
+    "要するに",
+]
 
 
 def find_latest_search_results_file():
@@ -55,10 +92,31 @@ def build_length_instruction(content_length, max_chars):
     return CONTENT_LENGTH_PRESETS[content_length]
 
 
+def build_variation_briefs(count):
+    briefs = []
+    for index in range(count):
+        briefs.append(
+            {
+                "index": index + 1,
+                "opening": OPENING_STYLES[index % len(OPENING_STYLES)],
+                "angle": ANGLE_VARIATIONS[index % len(ANGLE_VARIATIONS)],
+                "structure": STRUCTURE_VARIATIONS[index % len(STRUCTURE_VARIATIONS)],
+                "closing": CLOSING_STYLES[index % len(CLOSING_STYLES)],
+            }
+        )
+    return briefs
+
+
 def build_prompt(payload, count, content_length, max_chars):
     length_instruction = build_length_instruction(content_length, max_chars)
     source_json = json.dumps(payload, ensure_ascii=False, indent=2)
     anti_spam_rules = "\n".join(f"- {rule}" for rule in ANTI_SPAM_POSTING_GUIDELINES)
+    variation_briefs = build_variation_briefs(count)
+    variation_rules = "\n".join(
+        f"- 投稿{brief['index']}: 導入={brief['opening']} / 視点={brief['angle']} / 構成={brief['structure']} / 締め={brief['closing']}"
+        for brief in variation_briefs
+    )
+    avoid_shared_phrases = "、".join(f"「{phrase}」" for phrase in AVOID_SHARED_PHRASES)
     return f"""以下の検索結果JSONをもとに、Threads投稿用の日本語コンテンツを{count}個作成してください。
 
 条件:
@@ -67,10 +125,22 @@ def build_prompt(payload, count, content_length, max_chars):
 - 誇張しすぎない
 - 各投稿は独立した完成文にする
 - 各投稿で視点や切り口を少しずつ変える
+- 全投稿が同じ人の量産文に見えないよう、別日に別の気分で書いたような差をはっきり出す
+- 冒頭の入り方、文の長さ、語尾、着眼点、締め方を投稿ごとに変える
+- 同じ主張を言い換えただけの重複を避け、各投稿は別の切り口を1つ持たせる
+- 人間がその場で書いたような小さな揺れを残し、整いすぎたテンプレ文にしない
 - {length_instruction}
 - ハッシュタグは必要なときだけ最小限
 - スパム判定や量産投稿に見えにくくするため、次も守る:
 {anti_spam_rules}
+- 各投稿は次の設計を必ず変える:
+{variation_rules}
+- 全投稿で共通して使い回しやすい書き出し {avoid_shared_phrases} は多用しない。使うとしても1回まで
+- 出力前に必ず自己チェックし、各投稿で以下が重複していたら書き直す:
+  1. 冒頭5文字前後の言い回し
+  2. 主張の中心となる論点
+  3. 文末の締め方や語尾の型
+  4. 文のリズムや文数
 - 結果はJSONのみ返す
 - JSON形式は次の通り:
 {{
